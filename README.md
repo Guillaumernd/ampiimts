@@ -3,16 +3,6 @@
 
 ## Summary
 
-- [Description](#description)
-    - [Goal](#goal) — Adaptive indexing using Matrix Profile on irregular, multivariate time series.
-        - [Data Preprocessing](#1-data-preprocessing) — Normalize signals and handle uneven sampling with interpolation or time-aware distances (Soft-DTW, TWED).
-        - [Adaptive Window Strategy](#2-adaptive-window-strategy) — Variable-length windowing based on signal or time-based heuristics.
-        - [Matrix Profile Integration](#3-matrix-profile-integration) — Use STUMPY or MatrixProfile to compute motifs and profiles in each adaptive window.
-        - [Indexing and Retrieval](#4-indexing-and-retrieval) — Store subsequence embeddings using FAISS for fast similarity and anomaly queries.
-        - [Anomaly Detection](#5-anomaly-detection) — Detect and rank anomalies using matrix profile values.
-    - [Evaluation](#evaluation) — Benchmarked on NAB and lab datasets with metrics like F1, AUC, latency, and robustness.
-    - [Deliverables](#deliverables) — Python package, notebooks, benchmarks, and a technical report.
-    - [References](#references) — Key literature on Matrix Profiles, Soft-DTW, and adaptive anomaly detection.
 - [Installation](#installation) — Setup instructions for using the package.
 
 - [Technologies](#Technologies) - Understand What dependances are used in this package  
@@ -25,80 +15,7 @@
 - [Identification Process — Without Reference Motifs (Unsupervised with Matrix Profile)](#identification-process--without-reference-motifs-unsupervised-with-matrix-profile)
 
 - [Identification Process — With Reference Motifs (FAISS + CID-DTW)](#identification-process--with-reference-motifs-faiss--cid-dtw)
-## Description 
-### Goal 
 
-Develop an adaptive indexing approach that leverages the matrix profile on unevenly sampled, multivariate time series, using variable window lengths tailored to local sampling density and signal behavior.
-
-#### 1. Data Preprocessing
-
-- Handle irregular sampling via:
-    - Interpolation (linear, spline, etc.).
-    - Time-aware distance functions (Time Warp Edit Distance (TWED) (https://github.com/pfmarteau/TWED) or Soft-DTW (https://github.com/mblondel/soft-dtw)).
-- Normalize per channel (z-score or min-max).
-
-#### 2. Adaptive Window Strategy
-
-- Investigate window sizing policies:
-
-    - Signal-based: entropy, variance, or gradient magnitude.
-    - Time-based: inter-sample time gap threshold.
-- Implement a method to dynamically define windows over each segment of data per channel or jointly.
-
-#### 3. Matrix Profile Integration
-
-- Use stumpy or matrixprofile library to compute:
-
-    - Matrix profiles within each window.
-    - Multivariate extensions like mSTAMP or mSTOMP for multidimensional series.
-- Adapt the algorithm to use non-uniform windows (a key novelty here).
-
-#### 4. Indexing and Retrieval
-- Store subsequence embeddings (from matrix profile distances or motifs) in a fast index (e.g. FAISS [https://github.com/facebookresearch/faiss]).
-- Allow fast retrieval of nearest neighbors or anomalies based on profile values.
-#### 5. Anomaly Detection
-- Anomalies = subsequences with high profile values (i.e., no close neighbor).
-- Score and rank anomalies across windows and channels.
- - (Optional) Fuse anomalies across variables using joint profile metrics.
-
-### Evaluation
-
-- Datasets:
-    - Numenta NAB [irregular IoT-style data] (https://github.com/numenta/NAB)
-    - Custom data of the Signal Processing Lab
-- Metrics:
-    - Anomaly detection (precision, recall, F1, AUC)
-    - Index/query latency
-    - Profile computation time vs. standard mSTAMP
-    - Robustness to sampling irregularity and noise
-### Deliverables
-
-- A modular Python package with:
-    - Preprocessing pipeline
-    - Adaptive windowing
-    - Matrix profile computation (single and multivariate)
-    - Index-based anomaly scoring
-- Jupyter notebooks with reproducible experiments
-- Benchmark results and short technical report or blog
-### References
-
-- [1] Time Warp Edit Distance (https://arxiv.org/abs/0802.3522)
-- [2] Soft-DTW: a Differentiable Loss Function for Time-Series (https://arxiv.org/abs/1703.01541)
-- [3] A Complexity-Invariant Distance Measure for Time Series (https://www.cs.ucr.edu/%7Eeamonn/Complexity-Invariant%20Distance%20Measure.pdf)
-- [4] Utilizing an adaptive window rolling median methodology for time series anomaly detection (https://www.sciencedirect.com/science/article/pii/S1877050922023328?ref=cra_js_challenge&fr=RR-1)
-- [5] An adaptive sliding window for anomaly detection of time series in wireless sensor networks (https://link.springer.com/article/10.1007/s11276-021-02852-3)
-- [6] Anomaly detection in time series: a comprehensive evaluation (https://dl.acm.org/doi/abs/10.14778/3538598.3538602)
-- [7] Anomaly Detection for IoT Time-Series Data: A Survey (https://ieeexplore.ieee.org/abstract/document/8926446)
-- [8] Adaptive sliding window normalization (https://www.sciencedirect.com/science/article/pii/S030643792400173X)
-- [9] Anomaly Detection Using Causal Sliding Windows (https://ieeexplore.ieee.org/abstract/document/7109108)
-- [10] Comparing Threshold Selection Methods for Network Anomaly Detection (https://ieeexplore.ieee.org/abstract/document/10659855)
-- [11] DAMP: accurate time series anomaly detection on trillions of datapoints and ultra-fast arriving data streams (https://link.springer.com/article/10.1007/s10618-022-00911-7)
-- [12] Discovering Multi-Dimensional Time Series Anomalies with K of N Anomaly Detection (https://epubs.siam.org/doi/epdf/10.1137/1.9781611977653.ch77)
-- [13] Introduction to Matrix Profiles (https://medium.com/data-science/introduction-to-matrix-profiles-5568f3375d90)
-- [14] Matrix Profile Tutorial (https://www.cs.ucr.edu/~eamonn/Matrix_Profile_Tutorial_Part2.pdf)
-- [15] C22MP: Fusing catch22 and the Matrix Profile to Produce an Efficient and Interpretable Anomaly Detector (https://www.dropbox.com/scl/fi/3vs0zsh4tw63qrn46uyf9/C22MP_ICDM.pdf?rlkey=dyux24kqpagh3i38iw6obiomq&e=1&dl=0)
-- [16] Matrix Profile for Anomaly Detection on Multidimensional Time Series (https://arxiv.org/abs/2409.09298)
- 
 ## Installation
 
 ### 1. From PyPI (recommended once the package is published)
