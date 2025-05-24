@@ -1,0 +1,31 @@
+[project]
+name = "ampiimts"
+version = "0.1.0"
+description = "Adaptive indexing using Matrix Profile on irregular, multivariate time series."
+authors = [
+    { name = "Guillaume Renouard", email = "guillaumernrd76@gmail.com" }
+]
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+
+dependencies = [
+    "h5py>=3.9.0",
+    "numpy>=1.24.0",
+    "pandas>=2.1.0",
+    "tslearn>=0.6.3",
+    "stumpy>=1.11.1",
+    "faiss-cpu>=1.7.4",
+    "matplotlib>=3.7.0",
+    "ruptures>=1.1.9",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=6.1.1",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
