@@ -128,59 +128,36 @@ def _compute_aswn(
 
 def find_optimal_m(
     signal: np.ndarray,
-    pen_values=None,
-    tolerance: int = 4,
-    delta: int = 2,
     model: str = "l2",
-    downsample: int = 2,
     ):
     """
     Finds the optimal window size m for a time series using changepoint detection and plateau detection.
 
     Args:
         signal (np.ndarray): The time series to segment.
-        pen_values (array-like, optional): List of penalty values to test.
-        tolerance (int): Number of consecutive stable medians required to declare a plateau.
-        delta (int): Maximum allowed variation for the plateau (in points).
         model (str): Ruptures model used for segmentation ("l2", "l1", etc.).
-        downsample (int) : Define the resolution for the process, reduce the computation time
     Returns:
         m_opt (int): The optimal window size (median segment length on the first plateau).
     """
 
-    signal = signal[::downsample]
-
     # if pen is inputed by user
-    if isinstance(pen_values, (int, float, np.integer, np.floating)):
-        algo = rpt.Pelt(model=model).fit(signal)
-        bkps = algo.predict(pen=pen_values)
-        segment_lengths = np.diff([0] + bkps)
-        m_opt = int(np.median(segment_lengths))
-        print(f"Optimal m = {m_opt}")
-        return m_opt
-    
-    medians = []
-
-    for i, pen in enumerate(pen_values):
-        algo = rpt.Pelt(model=model).fit(signal)
-        bkps = algo.predict(pen=pen)
-        segment_lengths = np.diff([0] + bkps)
-        medians.append(np.median(segment_lengths))
-        if i >= tolerance:
-            window = medians[i - tolerance : i + 1]
-            if np.max(window) - np.min(window) <= delta:
-                m_opt = int(np.median(window))
-                print(f"Optimal m detected: m = {m_opt} (plateau found at pen={pen_values[i - tolerance]})")
-                return m_opt
-    print(f"No clear plateau found: returning the last median as m_opt : {int(medians[-1])}.")
-    return int(medians[-1])
+    duration_days = (signal.index.max() - signal.index.min()).total_seconds() / (24 * 3600)
+    duration_days = max(duration_days, 1)
+    pen = 3 * np.log(duration_days)
+    bkps = rpt.Pelt(model=model).fit(signal.values).predict(pen=pen)   
+    segment_lengths = np.diff([0] + bkps)
+    print(f"window size pen = {round(np.median(segment_lengths))}")
+    print(f"Window size per day = {pd.Timedelta('1D') / signal.index.to_series().diff().median()}")
+    m_opt = max(int(np.median(segment_lengths)), pd.Timedelta('1D') / signal.index.to_series().diff().median())
+    print(f"Optimal m = {m_opt}")
+    return m_opt
 
 def aswn_with_trend(
     series: pd.Series, 
     window_size: int = 50, 
     min_std: float = 1e-2,
     min_valid_ratio: float = 0.8, 
-    alpha: float = 0.25,
+    alpha: float = 0.65,
     ) -> pd.Series:
     """
     ASWN normalization with optional trend blending.
@@ -199,6 +176,7 @@ def aswn_with_trend(
     normed = _compute_aswn(values, window_size, min_std, min_valid_ratio)
     result = pd.Series(normed, index=series.index)
     if alpha > 0:
+        print(window_size)
         trend = series.rolling(window=window_size * 10, center=True, min_periods=1).mean()
         return (1 - alpha) * result + alpha * (series - trend)
     return result
@@ -207,9 +185,8 @@ def normalization(
     df: pd.DataFrame, 
     min_std: float = 1e-2,
     min_valid_ratio: float = 0.8, 
-    alpha: float = 0.25,
-    pen_values = 260,
-    window_size: int = None,
+    alpha: float = 0.65,
+    window_size: str = None,
     ) -> pd.DataFrame:
     """
     Applies ASWN normalization (with trend) to all numeric columns in a DataFrame.
@@ -229,14 +206,18 @@ def normalization(
         df.index = pd.to_datetime(df.index, errors='coerce')
     df = df.sort_index()
 
-    if window_size is None:
+    if window_size == None:
         window_sizes = []
         for col in df.columns:
             if pd.api.types.is_numeric_dtype(df[col]):
-                m = find_optimal_m(df[col].dropna().values, pen_values=pen_values)
+                m = find_optimal_m(df[col].dropna())
+                print(m)
                 window_sizes.append(m)
         window_size = int(round(np.mean(window_sizes)))
-
+    elif isinstance(window_size, str):
+        window_size = int(pd.Timedelta(window_size) / df.index.to_series().diff().median())
+    else: 
+        raise RuntimeError("Window size isn't a str (e.g. : 1D, 1h, 1S etc...)")
     for col in df.columns:
         if pd.api.types.is_numeric_dtype(df[col]):
             df[col] = aswn_with_trend(df[col], window_size, min_std, min_valid_ratio, alpha)
@@ -248,9 +229,8 @@ def pre_processed(
     gap_multiplier: float = 15,
     min_std: float = 1e-2,
     min_valid_ratio: float = 0.8, 
-    alpha: float = 0.25,
-    window_size: int = None,
-    pen_values = 260,
+    alpha: float = 0.65,
+    window_size: str = None,
     ) -> pd.DataFrame:
     """
     Runs a full preprocessing pipeline on a pandas DataFrame time series:
@@ -278,7 +258,7 @@ def pre_processed(
     df_preprocessed = interpolate(df_preprocessed, gap_multiplier)
     
     # Step 2: Apply local normalization to all numeric columns (ASWN, with trend blending if alpha>0)
-    df_preprocessed = normalization(df_preprocessed, min_std=min_std, min_valid_ratio=min_valid_ratio, alpha=alpha, pen_values=pen_values, window_size=window_size)  
+    df_preprocessed = normalization(df_preprocessed, min_std=min_std, min_valid_ratio=min_valid_ratio, alpha=alpha, window_size=window_size)  
     
     # Return the processed DataFrame
     return df_preprocessed

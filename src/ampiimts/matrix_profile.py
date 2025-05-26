@@ -26,7 +26,7 @@ def matrix_profile(df_o: pd.DataFrame, window_size: Optional[int] = None):
         
     # Use window_size from DataFrame attributes if not explicitly provided
     if window_size is None and 'm' in df.attrs:
-        window_size = df.attrs['m']
+        window_size = df.attrs['m'] // 2
     # Raise error if window_size is still not set
     if window_size is None:
         raise RuntimeError("Critical error: window_size not provided")
@@ -45,5 +45,13 @@ def matrix_profile(df_o: pd.DataFrame, window_size: Optional[int] = None):
         # maamp handles multivariate case (no normalization)
         matrix_profile = sp.maamp(df.values, window_size)
     df_profile = pd.DataFrame(matrix_profile, columns=['value', 'index_1', 'index_2', 'index_3'])
-    df_profile.index = df_o.index[window_size-1:]
+    profile_len = len(df_o) - window_size + 1
+
+    # Center timestamp index on matrix profile
+    center_indices = np.arange(profile_len) + window_size
+    # Vérification pour ne pas dépasser les bornes
+    center_indices = center_indices[center_indices < len(df_o)]
+    df_profile = df_profile.iloc[:len(center_indices)]
+    df_profile.index = df_o.index[center_indices]
+
     return df_profile

@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from swt import interpolate, _compute_aswn, aswn_with_trend, normalization, pre_processed
+from ampiimts import interpolate, _compute_aswn, aswn_with_trend, normalization, pre_processed
 
 
 def test_interpolate_fills_small_gaps():
