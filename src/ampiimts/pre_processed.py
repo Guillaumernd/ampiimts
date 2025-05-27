@@ -272,26 +272,42 @@ def define_m_using_clustering(
         #serie to analyse
         values = df[col].values
         for ws_pts, ws_str in window_sizes:
-            if ws_pts>len(values): continue
-            #list of segments, cut 
+            # Skip window sizes larger than the full series
+            if ws_pts > len(values): continue
+
+            # Extract all sliding window segments of size ws_pts from the time series
             segments = np.lib.stride_tricks.sliding_window_view(values, ws_pts)
-            #lenght of segment 
             n = segments.shape[0]
-            if n<2: continue #check the number of segments to analyse
+            
+            # Skip if there are less than 2 segments to compare
+            if n < 2: continue
 
-            # ---- FAISS -----
+            # --- (Optional) Normalize each segment (z-score) to remove mean and scale to unit variance ---
+            segments = (segments - segments.mean(axis=1, keepdims=True)) / (segments.std(axis=1, keepdims=True) + 1e-8)
 
-            #define the index type before compare segments
+            # --- FAISS nearest neighbor search ---
+            # Create a FAISS index for L2 (Euclidean) distance, with dimension = window size
             index = faiss.IndexFlatL2(ws_pts)
-            # add each segment in 32Bytes format
+            # Add all segments to the FAISS index as float32
             index.add(segments.astype(np.float32))
-            # search the 2 nearest neighbours
+            # For each segment, find the 2 nearest neighbors (itself and its closest other segment)
             Distance_neighbours, Index_neighbours = index.search(segments.astype(np.float32), 2)
-            #Distance of the nearest neighbours
-            nearest_distance = Distance_neighbours[:,1]
-            #score median of the nearest neighbour
-            score_nearest_neighbour = np.median(nearest_distance)
-            result_nearest_neighbours.append((ws_pts, ws_str, score_nearest_neighbour))
+            # Take the distance to the nearest neighbor (excluding itself, which is at distance 0)
+            nearest_distance = Distance_neighbours[:, 1]
+
+            # --- Main score: median nearest neighbor distance, normalized by window size ---
+            score_nearest_neighbour = np.median(nearest_distance) / ws_pts
+
+            # --- Density score: fraction of segments with a very close neighbor ---
+            # Threshold: 1.5x the normalized median neighbor distance
+            threshold = score_nearest_neighbour * 1.5
+            density_score = (nearest_distance < threshold).sum() / n
+
+            # --- Store all scores for this window size ---
+            result_nearest_neighbours.append(
+                (ws_pts, ws_str, score_nearest_neighbour, density_score)
+            )
+
 
             # # ---- Soft-DTW ----
             # # sampling if more of 50 segments

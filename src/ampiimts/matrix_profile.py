@@ -26,7 +26,7 @@ def matrix_profile(df_o: pd.DataFrame, window_size: Optional[int] = None):
         
     # Use window_size from DataFrame attributes if not explicitly provided
     if window_size is None and 'm' in df.attrs:
-        window_size = df.attrs['m'] // 2
+        window_size = df.attrs['m']
     # Raise error if window_size is still not set
     if window_size is None:
         raise RuntimeError("Critical error: window_size not provided")
