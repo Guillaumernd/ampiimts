@@ -4,6 +4,7 @@ from numba import njit
 import ruptures as rpt
 import faiss
 from tslearn.metrics import soft_dtw
+from typing import Union, List
 
 def interpolate(
     df: pd.DataFrame, 
@@ -148,10 +149,10 @@ def find_optimal_m(
     pen = 3 * np.log(duration_days)
     bkps = rpt.Pelt(model=model).fit(signal.values).predict(pen=pen)   
     segment_lengths = np.diff([0] + bkps)
-    print(f"window size pen = {round(np.median(segment_lengths))}")
-    print(f"Window size per day = {pd.Timedelta('1D') / signal.index.to_series().diff().median()}")
+    # print(f"window size pen = {round(np.median(segment_lengths))}")
+    # print(f"Window size per day = {pd.Timedelta('1D') / signal.index.to_series().diff().median()}")
     m_opt = max(int(np.median(segment_lengths)), pd.Timedelta('1D') / signal.index.to_series().diff().median())
-    print(f"Optimal m = {m_opt}")
+    # print(f"Optimal m = {m_opt}")
     return m_opt
 
 def aswn_with_trend(
@@ -178,7 +179,7 @@ def aswn_with_trend(
     normed = _compute_aswn(values, window_size, min_std, min_valid_ratio)
     result = pd.Series(normed, index=series.index)
     if alpha > 0:
-        print(window_size)
+        # print(window_size)
         trend = series.rolling(window=window_size * 10, center=True, min_periods=1).mean()
         return (1 - alpha) * result + alpha * (series - trend)
     return result
@@ -213,7 +214,7 @@ def normalization(
         for col in df.columns:
             if pd.api.types.is_numeric_dtype(df[col]):
                 m = find_optimal_m(df[col].dropna())
-                print(m)
+                # print(m)
                 window_sizes.append(m)
         window_size = int(round(np.mean(window_sizes)))
     elif isinstance(window_size, str):
@@ -229,8 +230,6 @@ def normalization(
 
 def define_m_using_clustering( 
     df : pd.DataFrame,
-    gap_multiplier : int = 15,
-    gamma : int = 1,
     k : int = 3,
     window_sizes : list = ['0,001s', '0,01s', '0,1s', '1s', '15s', '30s',
                           '1m', '150s', '5m', '450s', '10m', '15m', '30m', '45m',
@@ -247,9 +246,7 @@ def define_m_using_clustering(
     computed using soft-DTW. Clustering is then used to identify the window sizes that yield the most stable and repetitive motifs.
 
     Args:
-        df (pd.DataFrame): Input DataFrame with a DatetimeIndex.
-        gap_multiplier (float): Threshold for maximum gap to interpolate (as a multiple of base frequency).
-        gamma (float): Soft-DTW gamma parameter to control sensitivity to temporal distortion.
+        df (pd.DataFrame): Input interpolate DataFrame with a DatetimeIndex.
         k (int): Number of top window sizes to return.
         window_sizes (list of str): List of window sizes to test (e.g., ['1m', '1h', '24h']).
 
@@ -257,8 +254,6 @@ def define_m_using_clustering(
         results (list of tuples): Each tuple is (window_size_in_points, window_size_as_timedelta, stability_score), sorted by stability_score (ascending).
         The k best window sizes are returned.
     """
-    #interpolate dataframe
-    df = interpolate(df, gap_multiplier=gap_multiplier)
     #regular frequence of df
     freq = df.index.to_series().diff().median()
     #window_size in points, we filter the possible window_size
@@ -295,15 +290,15 @@ def define_m_using_clustering(
             # Take the distance to the nearest neighbor (excluding itself, which is at distance 0)
             nearest_distance = Distance_neighbours[:, 1]
 
-            # --- Main score: median nearest neighbor distance, normalized by window size ---
+            # Main score: median nearest neighbor distance, normalized by window size ---
             score_nearest_neighbour = np.median(nearest_distance) / ws_pts
 
-            # --- Density score: fraction of segments with a very close neighbor ---
+            # Density score: fraction of segments with a very close neighbor ---
             # Threshold: 1.5x the normalized median neighbor distance
             threshold = score_nearest_neighbour * 1.5
             density_score = (nearest_distance < threshold).sum() / n
 
-            # --- Store all scores for this window size ---
+            # Store all scores for this window size ---
             result_nearest_neighbours.append(
                 (ws_pts, ws_str, score_nearest_neighbour, density_score)
             )
@@ -336,7 +331,7 @@ def define_m_using_clustering(
     return final_result
 
 def pre_processed(
-    df: pd.DataFrame,
+    df: Union[pd.DataFrame, List[pd.DataFrame]],
     gap_multiplier: float = 15,
     min_std: float = 1e-2,
     min_valid_ratio: float = 0.8, 
@@ -349,7 +344,7 @@ def pre_processed(
       - Applies local ASWN normalization (with optional trend blending)
     
     Args:
-        df (pd.DataFrame): Input data, must have a DatetimeIndex.
+        df (pd.DataFrame or list[pd.DataFrame]): Input data, must have a DatetimeIndex.
         gap_multiplier (float): Threshold for maximum gap to interpolate (as a multiple of base frequency).
         min_std (float): Minimum allowed standard deviation in the normalization window.
         min_valid_ratio (float): Minimum fraction of valid points in each window.
@@ -359,15 +354,34 @@ def pre_processed(
         pd.DataFrame: The preprocessed DataFrame (regular time grid, interpolated, normalized).
     """
     # Ensure the input is a DataFrame; fail early with a clear error if not
-    if not isinstance(df, pd.DataFrame):
-        raise TypeError("Input 'df' must be a pandas DataFrame")
-    
+
+    if not (isinstance(df, pd.DataFrame) or (isinstance(df, list) and all(isinstance(x, pd.DataFrame) for x in df))):
+        raise TypeError("df must be a pd.DataFrame or a list of pd.DataFrame")
+
+    if isinstance(df, list):
+        dataframes = df.copy()
+        df = None
+        results = []
+        for df in dataframes:
+            # Defensive copy to avoid mutating user input
+            df_preprocessed = df.copy()
+            # Step 1: Interpolate small gaps on a regular grid, leave large gaps as NaN
+            df_preprocessed = interpolate(df_preprocessed, gap_multiplier)
+            results.append(df_preprocessed)
+        return results
+
     # Defensive copy to avoid mutating user input
     df_preprocessed = df.copy()
     
     # Step 1: Interpolate small gaps on a regular grid, leave large gaps as NaN
     df_preprocessed = interpolate(df_preprocessed, gap_multiplier)
-    
+    if window_size == None:
+        window_size = define_m_using_clustering(df_preprocessed)
+        window_size_str = [win[1] for win in window_size]
+        print("Best window sizes (hours):", ', '.join(window_size_str))
+        window_size = window_size[0][1]
+
+
     # Step 2: Apply local normalization to all numeric columns (ASWN, with trend blending if alpha>0)
     df_preprocessed = normalization(df_preprocessed, min_std=min_std, min_valid_ratio=min_valid_ratio, alpha=alpha, window_size=window_size)  
     
