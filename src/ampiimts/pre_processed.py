@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 from numba import njit
 import ruptures as rpt
+import faiss
+from tslearn.metrics import soft_dtw
 
 def interpolate(
     df: pd.DataFrame, 
@@ -223,6 +225,99 @@ def normalization(
             df[col] = aswn_with_trend(df[col], window_size, min_std, min_valid_ratio, alpha)
     df.attrs['m'] = window_size 
     return df
+
+
+def define_m_using_clustering( 
+    df : pd.DataFrame,
+    gap_multiplier : int = 15,
+    gamma : int = 1,
+    k : int = 3,
+    window_sizes : list = ['0,001s', '0,01s', '0,1s', '1s', '15s', '30s',
+                          '1m', '150s', '5m', '450s', '10m', '15m', '30m', '45m',
+                          '1h', '2h', '3h', '4h', '5h', '6h', '7h',
+                          '8h', '9h', '10h', '15h', '24h', '48h', '72h',
+                          '168h'
+                          ],
+    ) -> list[tuple[int, str, float]]:
+    """
+    Determines the best window sizes for motif extraction in a time series using clustering.
+
+    This function applies interpolation and normalization to the input DataFrame, then extracts sliding segments for a range of window sizes.
+    Each segment is vectorized, and the FAISS library is used to accelerate nearest-neighbor searches. The similarity between segments is
+    computed using soft-DTW. Clustering is then used to identify the window sizes that yield the most stable and repetitive motifs.
+
+    Args:
+        df (pd.DataFrame): Input DataFrame with a DatetimeIndex.
+        gap_multiplier (float): Threshold for maximum gap to interpolate (as a multiple of base frequency).
+        gamma (float): Soft-DTW gamma parameter to control sensitivity to temporal distortion.
+        k (int): Number of top window sizes to return.
+        window_sizes (list of str): List of window sizes to test (e.g., ['1m', '1h', '24h']).
+
+    Returns:
+        results (list of tuples): Each tuple is (window_size_in_points, window_size_as_timedelta, stability_score), sorted by stability_score (ascending).
+        The k best window sizes are returned.
+    """
+    #interpolate dataframe
+    df = interpolate(df, gap_multiplier=gap_multiplier)
+    #regular frequence of df
+    freq = df.index.to_series().diff().median()
+    #window_size in points, we filter the possible window_size
+    window_sizes = [(int(pd.Timedelta(ws) / freq), ws) for ws in window_sizes if (pd.Timedelta(ws) >= freq and int(pd.Timedelta(ws) / freq) >= 10 and int(pd.Timedelta(ws) / freq) < len(df)//4)]
+
+    # list of tuples to return
+    result_nearest_neighbours = []
+
+    # iteration on each numeric column of the dataframe
+    for col in [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]:
+        #serie to analyse
+        values = df[col].values
+        for ws_pts, ws_str in window_sizes:
+            if ws_pts>len(values): continue
+            #list of segments, cut 
+            segments = np.lib.stride_tricks.sliding_window_view(values, ws_pts)
+            #lenght of segment 
+            n = segments.shape[0]
+            if n<2: continue #check the number of segments to analyse
+
+            # ---- FAISS -----
+
+            #define the index type before compare segments
+            index = faiss.IndexFlatL2(ws_pts)
+            # add each segment in 32Bytes format
+            index.add(segments.astype(np.float32))
+            # search the 2 nearest neighbours
+            Distance_neighbours, Index_neighbours = index.search(segments.astype(np.float32), 2)
+            #Distance of the nearest neighbours
+            nearest_distance = Distance_neighbours[:,1]
+            #score median of the nearest neighbour
+            score_nearest_neighbour = np.median(nearest_distance)
+            result_nearest_neighbours.append((ws_pts, ws_str, score_nearest_neighbour))
+
+            # # ---- Soft-DTW ----
+            # # sampling if more of 50 segments
+            # if n> 50 : 
+            #     idx = np.random.choice(n, 50, replace=False)
+            # else:
+            #     #list of n
+            #     idx =  np.arange(n)
+            # sdtw_distance = []
+            # for i in idx:
+            #     #Get neighbours with soft_DTW to take in account temporel distorsion
+            #     Distance_neighbours = [soft_dtw(segments[i], segments[j], gamma=gamma) for j in range(n) if j != i]
+
+            #     if len(Distance_neighbours) > 10: 
+            #         #add only ten best neighbours distance and calculate median of the segments
+            #         sdtw_distance.append(np.mean(np.partition(Distance_neighbours, 10)[:10]))
+            #     elif Distance_neighbours:
+            #         sdtw_distance.append(np.mean(Distance_neighbours))
+            # if sdtw_distance:
+            #     #get score  of the median window_size
+            #     result_nearest_neighbours = ((ws_pts, ws_str, np.median(sdtw_distance)))
+
+    #return the best window_sizes
+    final_result = sorted(result_nearest_neighbours, key=lambda x: x[2])[:k]
+
+    return final_result
 
 def pre_processed(
     df: pd.DataFrame,

@@ -48,7 +48,7 @@ def matrix_profile(df_o: pd.DataFrame, window_size: Optional[int] = None):
     profile_len = len(df_o) - window_size + 1
 
     # Center timestamp index on matrix profile
-    center_indices = np.arange(profile_len) + window_size
+    center_indices = np.arange(profile_len) + window_size // 2
     # Vérification pour ne pas dépasser les bornes
     center_indices = center_indices[center_indices < len(df_o)]
     df_profile = df_profile.iloc[:len(center_indices)]
