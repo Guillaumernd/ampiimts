@@ -301,7 +301,7 @@ def define_m_using_clustering(
     window_sizes: list = None,
     max_points: int = 4000,
     max_window_sizes: int = 12,
-    n_jobs: int = 4
+    n_jobs: int = -1
 ) -> list[tuple[int, str, float]]:
     """
     Determines the best window sizes for motif extraction in a time series
@@ -484,7 +484,7 @@ def pre_processed(
         (regular time grid, interpolated, normalized).
     """
     # Ensure the input is a DataFrame; fail early with a clear error if not
-
+    window_size_forward = None
     if not (
         isinstance(df, pd.DataFrame)
         or (isinstance(df, list)
@@ -531,16 +531,18 @@ def pre_processed(
                 dataframes_by_variable.append(df_by_variable)
             dataframes = dataframes_by_variable
         dataframes_preprocessed = []
+        print(len(dataframes))
         for df_preprocessed in dataframes:
             if window_size is None:
                 start_time_processed = time.perf_counter()
-                window_size = define_m_using_clustering(df_preprocessed)
+                window_size_forward = define_m_using_clustering(
+                    df_preprocessed)
                 end_time_processed = time.perf_counter()
                 print(f"time preprocessed {df_preprocessed.columns[0]}: {
                     end_time_processed - start_time_processed}")
-                window_size_str = [win[1] for win in window_size]
+                window_size_str = [win[1] for win in window_size_forward]
                 print("Best window sizes (hours):", ", ".join(window_size_str))
-                window_size = window_size[0][1]
+                window_size_forward = window_size_forward[0][1]
             # Step 2: Apply local normalization to all numeric columns
             # (ASWN, with trend blending if alpha>0)
             start_time_norma = time.perf_counter()
@@ -549,7 +551,7 @@ def pre_processed(
                 min_std=min_std,
                 min_valid_ratio=min_valid_ratio,
                 alpha=alpha,
-                window_size=window_size,
+                window_size=window_size_forward or window_size,
             )
             end_time_norma = time.perf_counter()
             print(f"time preprocessed {df_preprocessed.columns[0]}: {
@@ -564,10 +566,10 @@ def pre_processed(
     # Step 1: Interpolate small gaps on a regular grid, leave large gaps as NaN
     df_preprocessed = interpolate(df_preprocessed, gap_multiplier)
     if window_size is None:
-        window_size = define_m_using_clustering(df_preprocessed)
-        window_size_str = [win[1] for win in window_size]
+        window_size_forward = define_m_using_clustering(df_preprocessed)
+        window_size_str = [win[1] for win in window_size_forward]
         print("Best window sizes (hours):", ", ".join(window_size_str))
-        window_size = window_size[0][1]
+        window_size_forward = window_size_forward[0][1]
     # Step 2: Apply local normalization to all numeric columns
     # (ASWN, with trend blending if alpha>0)
     df_preprocessed = normalization(
@@ -575,7 +577,7 @@ def pre_processed(
         min_std=min_std,
         min_valid_ratio=min_valid_ratio,
         alpha=alpha,
-        window_size=window_size,
+        window_size=window_size_forward or window_size,
     )
 
     # Return the processed DataFrame
