@@ -40,6 +40,8 @@ cd ampiimts
 pip install .
 
 #Development installation (editable version with test for contribution)
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e .[test]
 ```
 
