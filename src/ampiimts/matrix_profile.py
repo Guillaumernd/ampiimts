@@ -52,6 +52,7 @@ def matrix_profile_process(
         mx_profile = sp.aamp(df.values.ravel(), window_size)
     else:
         # maamp handles multivariate case (no normalization)
+        print(df.values)
         mx_profile = sp.maamp(df.values, window_size)
     df_profile = pd.DataFrame(
         mx_profile, columns=['value', 'index_1', 'index_2', 'index_3'])
@@ -101,7 +102,7 @@ def matrix_profile(df_o: pd.DataFrame, window_size: Optional[int] = None):
         for df in df_o:
             mx_profile = matrix_profile_process(
                 df, window_size=window_size)
-        matrix_profiles.append(mx_profile)
+            matrix_profiles.append(mx_profile)
         return matrix_profiles
 
     matrix_profiles = matrix_profile_process(df_o, window_size=window_size)
