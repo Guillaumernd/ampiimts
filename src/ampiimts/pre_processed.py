@@ -462,28 +462,6 @@ def pre_processed(
     window_size: str = None,
     sort_by_variables: bool = True,
 ) -> pd.DataFrame:
-    """
-    Runs a full preprocessing pipeline on a pandas DataFrame time series:
-      - Interpolates small gaps (large gaps remain as NaN)
-      - Applies local ASWN normalization (with optional trend blending)
-
-    Args:
-        df (pd.DataFrame or list[pd.DataFrame]): Input data,
-         must have a DatetimeIndex.
-        gap_multiplier (float): Threshold for maximum gap to interpolate
-         (as a multiple of base frequency).
-        min_std (float): Minimum allowed standard deviation
-         in the normalization window.
-        min_valid_ratio (float): Minimum fraction of valid points in each
-         window.
-        alpha (float): Blending coefficient for trend removal (0=no trend,
-         1=only trend-removed).
-
-    Returns:
-        pd.DataFrame: The preprocessed DataFrame
-        (regular time grid, interpolated, normalized).
-    """
-    # Ensure the input is a DataFrame; fail early with a clear error if not
     window_size_forward = None
     if not (
         isinstance(df, pd.DataFrame)
@@ -500,11 +478,7 @@ def pre_processed(
                  if c in df.columns], axis=1
             )
             for df in dataframes]
-        start_time_pre_processed = time.perf_counter()
         dataframes = synchronize_on_common_grid(dataframes)
-        end_time_pre_processed = time.perf_counter()
-        print(f"time preprocessed : {
-            end_time_pre_processed - start_time_pre_processed}")
         numeric_cols_lists_by_df = [sorted(
             df.select_dtypes(
                 include=[np.number]).columns.tolist()) for df in dataframes]
@@ -516,8 +490,9 @@ def pre_processed(
                     "columns as DataFrame 0:\n"
                     f"Reference: {ref_name_dataframe}\nCurrent: {cols}"
                 )
-        # Sort dataframes by variables and not by sensors
+                
         if sort_by_variables:
+            # Ici, on laisse TOUT comme avant !!
             dataframes_by_variable = []
             for col_name in ref_name_dataframe:
                 cols_for_this_var = []
@@ -530,39 +505,54 @@ def pre_processed(
                 df_by_variable.index = dataframes[0].index
                 dataframes_by_variable.append(df_by_variable)
             dataframes = dataframes_by_variable
-        dataframes_preprocessed = []
-        print(len(dataframes))
-        for df_preprocessed in dataframes:
-            if window_size is None:
-                start_time_processed = time.perf_counter()
-                window_size_forward = define_m_using_clustering(
-                    df_preprocessed)
-                end_time_processed = time.perf_counter()
-                print(f"time preprocessed {df_preprocessed.columns[0]}: {
-                    end_time_processed - start_time_processed}")
-                window_size_str = [win[1] for win in window_size_forward]
-                print("Best window sizes (hours):", ", ".join(window_size_str))
-                window_size_forward = window_size_forward[0][1]
-            # Step 2: Apply local normalization to all numeric columns
-            # (ASWN, with trend blending if alpha>0)
-            start_time_norma = time.perf_counter()
-            df_preprocessed = normalization(
-                df_preprocessed,
-                min_std=min_std,
-                min_valid_ratio=min_valid_ratio,
-                alpha=alpha,
-                window_size=window_size_forward or window_size,
-            )
-            end_time_norma = time.perf_counter()
-            print(f"time preprocessed {df_preprocessed.columns[0]}: {
-                    end_time_norma - start_time_norma}")
-            dataframes_preprocessed.append(df_preprocessed)
-            # Return the processed DataFrame
-        return dataframes_preprocessed
-    else:
-        # Defensive copy to avoid mutating user input
-        df_preprocessed = df.copy()
 
+            dataframes_preprocessed = []
+            for df_preprocessed in dataframes:
+                if window_size is None:
+                    # On garde le calcul INDIVIDUEL
+                    window_size_forward = define_m_using_clustering(df_preprocessed)
+                    window_size_forward = window_size_forward[0][1]
+                else:
+                    window_size_forward = window_size
+
+                df_preprocessed = normalization(
+                    df_preprocessed,
+                    min_std=min_std,
+                    min_valid_ratio=min_valid_ratio,
+                    alpha=alpha,
+                    window_size=window_size_forward,
+                )
+                dataframes_preprocessed.append(df_preprocessed)
+            return dataframes_preprocessed
+
+        else:
+            # sort_by_variables == False → window_size unique pour tous
+            if window_size is None:
+                ms = []
+                df_ref = dataframes[0]
+                for _ in range(3):
+                    wins = define_m_using_clustering(df_ref)
+                    if isinstance(wins, list):
+                        ms.append(wins[0][1])
+                    else:
+                        ms.append(wins)
+                window_size_forward = Counter(ms).most_common(1)[0][0]
+                print(f"Most frequent window size after 3 runs (all dfs): {window_size_forward}")
+            else:
+                window_size_forward = window_size
+
+            dataframes_preprocessed = []
+            for df_preprocessed in dataframes:
+                df_preprocessed = normalization(
+                    df_preprocessed,
+                    min_std=min_std,
+                    min_valid_ratio=min_valid_ratio,
+                    alpha=alpha,
+                    window_size=window_size_forward,
+                )
+                dataframes_preprocessed.append(df_preprocessed)
+            return dataframes_preprocessed
+    df_preprocessed = df.copy()
     # Step 1: Interpolate small gaps on a regular grid, leave large gaps as NaN
     df_preprocessed = interpolate(df_preprocessed, gap_multiplier)
     if window_size is None:

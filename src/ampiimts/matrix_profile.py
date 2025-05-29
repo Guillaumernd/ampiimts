@@ -5,10 +5,23 @@ import stumpy as sp
 from joblib import Parallel, delayed
 
 
+def batch_process(df_list, window_size, n_jobs=4, batch_size=4):
+    results = []
+    # On traite batch_size dataframes à la fois
+    for i in range(0, len(df_list), batch_size):
+        batch = df_list[i:i+batch_size]
+        batch_result = Parallel(n_jobs=n_jobs)(
+            delayed(matrix_profile_process)(df, window_size=window_size)
+            for df in batch
+        )
+        results.extend(batch_result)
+    return results
+
+
 def multi_aamp_with_nan_parallel(
     df: pd.DataFrame,
     window_size: int,
-    n_jobs: int = -1
+    n_jobs: int = 4
 ):
     """
     Matrix Profile multivarié non normalisé (façon 'aamp'), NaN-friendly,
@@ -24,14 +37,34 @@ def multi_aamp_with_nan_parallel(
     n, k = X.shape
     profile_len = n - window_size + 1
 
-    # 1. Profil aamp univarié pour chaque colonne, EN PARALLÈLE !
-    def compute_aamp(col):
-        aamp_result = sp.aamp(X[:, col], window_size)
-        return aamp_result[:, 0], aamp_result[:, 1]
+    def batch_col_parallel(X, window_size, n_jobs=4, batch_size=4):
+        k = X.shape[1]
+        results = []
 
-    results = Parallel(n_jobs=n_jobs)(
-        delayed(compute_aamp)(col) for col in range(k)
-    )
+        
+        def compute_aamp(col):
+            try:
+                arr = X[:, col]
+                if np.all(np.isnan(arr)) or arr.shape[0] < window_size:
+                    print(f"[SKIP] Col {col}: full NaN or too short.")
+                    return (np.full(profile_len, np.nan), np.full(profile_len, -1))
+                aamp_result = sp.aamp(arr, window_size)
+                return aamp_result[:, 0], aamp_result[:, 1]
+            except Exception as e:
+                print(f"[ERROR] compute_aamp failed on col={col}, shape={arr.shape}, err={e}")
+                return (np.full(profile_len, np.nan), np.full(profile_len, -1))
+        for i in range(0, k, batch_size):
+            batch_cols = range(i, min(i+batch_size, k))
+            batch_result = Parallel(n_jobs=n_jobs, backend="threading")(
+                delayed(compute_aamp)(col) for col in batch_cols
+            )
+            results.extend(batch_result)
+        return results
+
+    
+    results = batch_col_parallel(
+        X, window_size, n_jobs=n_jobs, batch_size=2)
+
     uni_profiles, uni_indices = zip(*results)
     uni_profiles = np.stack(uni_profiles, axis=0).astype(np.float64)
     uni_indices = np.stack(uni_indices, axis=0).astype(np.int64)
@@ -97,7 +130,7 @@ def matrix_profile_process(
 def matrix_profile(
     df_o: Union[pd.DataFrame, List[pd.DataFrame]],
     window_size: Optional[int] = None,
-    n_jobs: int = -1
+    n_jobs: int = 4
 ) -> Union[pd.DataFrame, List[pd.DataFrame]]:
     """
     Compute the matrix profile for a DataFrame or a list of DataFrames
@@ -120,9 +153,8 @@ def matrix_profile(
         raise TypeError("df must be a pd.DataFrame or a list of pd.DataFrame")
     if isinstance(df_o, list):
         # Use joblib for parallel processing
-        matrix_profiles = Parallel(n_jobs=n_jobs)(
-            delayed(matrix_profile_process)(df, window_size=window_size)
-            for df in df_o
-        )
+        matrix_profiles = batch_process(
+            df_o, window_size, n_jobs=n_jobs, batch_size=n_jobs)
+
         return matrix_profiles
     return matrix_profile_process(df_o, window_size=window_size)

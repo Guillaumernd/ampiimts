@@ -1,5 +1,86 @@
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd 
+import seaborn as sns
+
+
+def matrix_profiles_to_array(matrix_profiles):
+    """Convertit une liste de DataFrames matrix profile (une par capteur) en une matrice 2D numpy."""
+    # On suppose que chaque DataFrame a la colonne 'value'
+    arr = np.vstack([df['value'].values for df in matrix_profiles])
+    return arr
+
+
+def plot_matrix_profiles_heatmap(matrix_profiles, time_index=None, capteur_labels=None, figsize=(18, 8), cmap='viridis'):
+    """
+    Affiche une heatmap de tous les matrix profiles (ex : chaque capteur en ligne, temps en colonne).
+    
+    Args:
+        matrix_profiles (list of pd.DataFrame): Liste de matrix profiles (chaque capteur).
+        time_index (pd.DatetimeIndex, optional): Pour les labels de l'axe des X (temps).
+        capteur_labels (list of str, optional): Labels pour chaque capteur.
+        figsize (tuple): Taille du graphique.
+        cmap (str): Palette de couleur (essaye 'viridis', 'magma', 'hot', 'cubehelix', etc.).
+    """
+    
+    arr = matrix_profiles_to_array(matrix_profiles)
+    arr_norm = (arr - arr.mean(axis=1, keepdims=True)) / (arr.std(axis=1, keepdims=True) + 1e-8)  # z-score par capteur
+
+    plt.figure(figsize=(20, 10))
+    sns.heatmap(arr_norm, cmap="magma", cbar=True)
+    plt.title("Matrix Profiles Heatmap (normalized)")
+    plt.ylabel("Capteur / Série")
+    plt.xlabel("Temps")
+    # Ajustement ticks X si besoin
+    n = arr.shape[1]
+    tick_positions = np.linspace(0, n-1, 8, dtype=int)
+    plt.xticks(tick_positions + 0.5, [str(matrix_profiles[0].index[i].date()) for i in tick_positions], rotation=45, ha='right', fontsize=10)
+    plt.yticks(fontsize=8)
+    plt.tight_layout()
+    plt.show()
+
+def plot_matrix_profiles(matrix_profiles, labels=None, column="value", figsize=(14, 5)):
+    """
+    Plot one or several matrix profiles (value vs. index/timestamp).
+    
+    Args:
+        matrix_profiles (pd.DataFrame or list of pd.DataFrame): Input(s) to plot.
+        labels (list of str, optional): Legend labels for each series.
+        column (str): The column to plot (default: 'value').
+        figsize (tuple): Figure size.
+    """
+    # Handle single DataFrame input
+    if isinstance(matrix_profiles, pd.DataFrame):
+        dfs = [matrix_profiles]
+    else:
+        dfs = list(matrix_profiles)
+    
+    n = len(dfs)
+    # Generate generic labels if none provided
+    if labels is None:
+        labels = [f"Profile {i+1}" for i in range(n)]
+    elif len(labels) != n:
+        raise ValueError("`labels` must match the number of matrix profiles.")
+    
+    color_list = plt.cm.get_cmap('tab20', n) if n > 10 else plt.get_cmap('tab10')
+    color_iter = (color_list(i) for i in range(n))
+    
+    # Plot all matrix profiles on the same plot
+    plt.figure(figsize=figsize)
+    for df_, label, color in zip(dfs, labels, color_iter):
+        df_ = df_.copy()
+        if 'timestamp' in df_.columns:
+            df_.index = pd.to_datetime(df_['timestamp'], errors='coerce')
+            df_ = df_.drop(columns=['timestamp'])
+        plt.plot(df_.index, df_[column], label=label, color=color)
+    plt.title("Matrix Profile(s) Summary")
+    plt.xlabel("Timestamp")
+    plt.ylabel(column)
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
 
 def plot_multiple_dfs(dfs, labels=None, column='value', figsize_per_plot=(12, 4)):
     """
