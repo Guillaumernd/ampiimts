@@ -333,8 +333,7 @@ def define_m_using_clustering(
     if window_sizes is None:
         window_sizes = [
             "1s", "15s", "30s", "1m", "5m", "10m", "15m", "30m", "1h", "3h",
-            "12h", "24h", "48h", "72h", "168h", "336h"
-        ]
+            "12h", "24h"]
 
     # Compute the median time interval between samples
     freq = df.index.to_series().diff().median()
