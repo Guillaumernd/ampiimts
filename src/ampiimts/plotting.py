@@ -119,24 +119,6 @@ def plot_multiple_dfs(dfs, labels=None, column='value', figsize_per_plot=(12, 4)
     plt.tight_layout()
     plt.show()
 
-    # 2) Separate subplots for each DataFrame
-    fig2, axes = plt.subplots(nrows=n, ncols=1, figsize=(figsize_per_plot[0], figsize_per_plot[1]*n))
-    if n == 1:
-        axes = [axes]
-    for ax, df_, label, color in zip(axes, dfs, labels, main_colors):
-        if 'timestamp' in df_.columns:
-            df_.index = pd.to_datetime(df_['timestamp'], errors='coerce')
-            df_ = df_.drop(columns=['timestamp'])
-        ax.plot(df_.index, df_[column], label=label, linewidth=1.5, color=color)
-        ax.set_title(label)
-        ax.set_xlabel("Timestamp")
-        ax.set_ylabel(column)
-        ax.legend()
-        ax.grid(True)
-    plt.tight_layout()
-    plt.show()
-
-
 def plot_all_variables_multiple_dfs(dfs, labels=None, variables=None, figsize_per_plot=(12, 4)):
     """
     For each variable/column, plot all DataFrames on the same graph (superposed),
@@ -186,3 +168,33 @@ def plot_all_variables_multiple_dfs(dfs, labels=None, variables=None, figsize_pe
         plt.grid(True)
         plt.tight_layout()
         plt.show()
+
+def plot_aligned_motifs(
+    aligned_segments: np.ndarray,
+    title: str = "Aligned Motifs"
+):
+    window_size = aligned_segments.shape[1]
+    t = np.arange(window_size)
+    mean_curve = aligned_segments.mean(axis=0)
+    # Trouve le segment le plus proche de la moyenne (méd-oïde)
+    distances = np.linalg.norm(aligned_segments - mean_curve, axis=1)
+    medoid_idx = np.argmin(distances)
+    medoid_curve = aligned_segments[medoid_idx]
+
+    plt.figure(figsize=(10, 5))
+    for i, seg in enumerate(aligned_segments):
+        plt.plot(t, seg, alpha=0.4, lw=1.5, label=f"Motif {i+1}" if i < 10 else None)
+    # Affiche le motif méd-oïde en noir épais
+    plt.plot(t, medoid_curve, color='black', linewidth=1, label="Most representative motif")
+    plt.fill_between(
+        t,
+        aligned_segments.mean(axis=0) - aligned_segments.std(axis=0),
+        aligned_segments.mean(axis=0) + aligned_segments.std(axis=0),
+        color='gray', alpha=0.2, label='Std. dev.'
+    )
+    plt.title(title)
+    plt.xlabel("Step in motif window (aligned)")
+    plt.ylabel("Value")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
