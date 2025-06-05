@@ -6,14 +6,18 @@ import numpy as np
 import pandas as pd
 import stumpy as sp
 import faiss
+import os 
+os.environ["NUMBA_NUM_THREADS"] = "8"
 import matplotlib.pyplot as plt
 from .motif_pipeline import discover_univariate_patterns, discover_multivariate_patterns
 from .plotting import plot_matrix_profiles
-
+from .motif_pattern import discover_patterns_stumpy_mixed
 
 
 def matrix_profile_process(
-        df_o: pd.DataFrame, window_size: Optional[int] = None, column=None):
+        df_o: pd.DataFrame, window_size: Optional[int] = None, column=None, 
+        max_motifs=3, top_percent_discords=0.02, margin_discord=0,
+        max_matches=10):
     df = df_o.copy()
     if 'timestamp' in df.columns:
         df = df.drop(columns=['timestamp'])
@@ -25,26 +29,42 @@ def matrix_profile_process(
         raise ValueError("All columns must be numeric for matrix profile computation.")
     # ==== UNIVARIATE ====
     if df.shape[1] == 1:
-        mx_profile = sp.stump(df.values.ravel(), window_size, normalize=False)
-        columns = ['value', 'index_1', 'index_2', 'index_3']
-        df_profile = pd.DataFrame(mx_profile, columns=columns)
-        profile_len = len(df_o) - window_size + 1
-        center_indices = np.arange(profile_len) + window_size // 2
-        center_indices = center_indices[center_indices < len(df_o)]
-        df_profile = df_profile.iloc[:len(center_indices)]
-        df_profile.index = df_o.index[center_indices]
-        return df_profile
+        return discover_patterns_stumpy_mixed(
+            df, window_size, max_motifs=max_motifs, 
+            top_percent_discords=top_percent_discords, margin_discord=margin_discord,
+            max_matches=max_matches)
     # ==== MULTIVARIATE ====
     else:
-        P, I = sp.mstump(df, m=window_size, normalize=False, discords=True)
+        P, I = sp.mstump(df, m=window_size, normalize=False, discords=False)
+        motif_distances, motif_indices, motif_subspaces, motif_mdls = sp.mmotifs(
+            df,
+            P,
+            I,
+            max_motifs=3,
+            max_matches=5,
+            normalize=False
+        )
         profile_len = df.shape[0] - window_size + 1
         center_indices = np.arange(profile_len) + window_size // 2
         center_indices = center_indices[center_indices < len(df)]
+
         df_profile = pd.DataFrame(P.T, columns=[f'value_{col}' for col in df.columns])
         df_profile.index = df.index[center_indices]
+
         df_index = pd.DataFrame(I.T, columns=[f'index_{col}' for col in df.columns])
         df_index.index = df.index[center_indices]
-        return df_profile
+
+        # Tout rassembler dans un dict pour clarté
+        return {
+            "profile": df_profile,
+            "profile_index": df_index,
+            "motif_distances": motif_distances,
+            "motif_indices": motif_indices,
+            "motif_subspaces": motif_subspaces,
+            "motif_mdls": motif_mdls,
+            "window_size": window_size,
+        }
+
 
 
 
@@ -52,7 +72,11 @@ def matrix_profile(
     df_o: Union[pd.DataFrame, List[pd.DataFrame]],
     window_size: Optional[int] = None,
     n_jobs: int = 4,
-    column: str = None
+    column: str = None, 
+    max_motifs=3,
+    top_percent_discords=0.02,
+    margin_discord=0,
+    max_matches=10, 
 ) -> Union[pd.DataFrame, List[pd.DataFrame]]:
     """
     Compute the matrix profile for a DataFrame or a list of DataFrames
@@ -80,7 +104,6 @@ def matrix_profile(
             return matrix_profile_process(df, window_size=window_size)
         result = Parallel(n_jobs=n_jobs)(delayed(mp_func)(df) for df in df_o)
         # Option : si tous tes dfs ont plusieurs colonnes, détecte et passe par mstump
-        print("coucou ça fonctionne")
         return result
 
 
@@ -88,7 +111,11 @@ def matrix_profile(
         column = df_o.columns[0]
     if window_size is None and 'm' in df_o.attrs:
         window_size = df_o.attrs['m']
-    df_profile = matrix_profile_process(df_o, window_size=window_size)
-    result = discover_univariate_patterns(
-        df_o, df_profile, window_size, column)
-    return result
+    df_profile = matrix_profile_process(df_o, window_size=window_size,
+            column=column, max_motifs=max_motifs, 
+            top_percent_discords=top_percent_discords,
+            margin_discord=margin_discord,
+            max_matches=max_matches)
+    # result = discover_univariate_patterns(
+    #     df_o, df_profile, window_size, column)
+    return df_profile

@@ -198,3 +198,75 @@ def plot_aligned_motifs(
     plt.legend()
     plt.tight_layout()
     plt.show()
+
+
+def plot_patterns_and_discords(df, result, column='value', figsize=(12, 6)):
+    """
+    Plot the original signal with identified motifs and discords, where each motif
+    is plotted in a distinct color, and discords are highlighted as shaded zones.
+    Additionally, vertical lines are added at the start and end of each motif zone.
+    Matrix Profile is plotted on a secondary y-axis.
+
+    Args:
+        df (pd.DataFrame): Original DataFrame with the time series data.
+        result (dict): Output from discover_patterns_stumpy_mixed function.
+        column (str): Column to plot (default is 'value').
+        figsize (tuple): Size of the plot (default is (12, 6)).
+    """
+    # Create the figure
+    fig, ax1 = plt.subplots(figsize=figsize)
+
+    # Plot the original signal on the primary axis
+    ax1.plot(df.index, df[column], label='Original Signal', color='black', alpha=0.5)
+    ax1.set_xlabel("Timestamp")
+    ax1.set_ylabel(column)
+    
+    # Create a secondary y-axis for the Matrix Profile
+    ax2 = ax1.twinx()
+
+    # Align Matrix Profile with the correct x-axis, considering the window size
+    matrix_profile_values = result["matrix_profile"]['value']
+    window_size = result["window_size"]
+    
+    # Centrer l'index du Matrix Profile en utilisant ta méthode
+    profile_len = len(df) - window_size + 1
+    center_indices = np.arange(profile_len) + window_size // 2
+    center_indices = center_indices[center_indices < len(df)]
+    
+    # Align the matrix profile indices with the signal index
+    matrix_profile_indices = df.index[center_indices]
+
+    # Check for size consistency between indices and values
+    if len(matrix_profile_indices) != len(matrix_profile_values):
+        print(f"Warning: Mismatch between Matrix Profile indices ({len(matrix_profile_indices)}) and values ({len(matrix_profile_values)}). Trimming excess values.")
+        matrix_profile_values = matrix_profile_values[:len(matrix_profile_indices)]
+
+    # Plot the Matrix Profile on the secondary axis
+    ax2.plot(matrix_profile_indices, matrix_profile_values, label='Matrix Profile', color='blue', alpha=0.6)
+    ax2.set_ylabel('Matrix Profile')
+
+    # Plot motifs for each pattern with distinct colors
+    motif_colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple']
+    for i, pattern in enumerate(result['patterns']):
+        color = motif_colors[i % len(motif_colors)]  # Use color cycle if more than 5 patterns
+        for motif_idx, motif_range in enumerate(pattern["all_motif_indices"]):
+            # Plot the motif
+            ax1.plot(df.index[motif_range[0]:motif_range[1]], 
+                     df[column].iloc[motif_range[0]:motif_range[1]], 
+                     color=color, label=f"{pattern['pattern_label']} motif {motif_idx+1}" if motif_idx == 0 else "", linewidth=2)
+            
+            # Add vertical lines at the start and end of the motif
+            ax1.axvline(df.index[motif_range[0]], color='green', linestyle='--', linewidth=2)
+            ax1.axvline(df.index[motif_range[1]], color='red', linestyle='--', linewidth=1)
+
+    # Plot discords as shaded regions (using the pre-calculated discord zones)
+    for discord in result['discord_indices']:
+        ax1.fill_between(df.index[discord[0]:discord[1]], df[column].min(), df[column].max(), color='red', alpha=0.3)
+
+    # Labeling the plot
+    ax1.set_title("Motifs, Discords, and Matrix Profile Detected")
+    ax1.legend(loc='upper right')
+    ax2.legend(loc='upper left')
+    ax1.grid(True)
+    plt.tight_layout()
+    plt.show()
