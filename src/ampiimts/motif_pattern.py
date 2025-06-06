@@ -22,23 +22,54 @@ def medoid_index(segments):
     D = np.array([[dtw(s1, s2) for s2 in segments] for s1 in segments])
     return np.argmin(D.sum(axis=1))
 
-def exclude_discords(mp, window_size, top_percent_discords=0.01, margin=0):
+def exclude_discords(mp, window_size, top_percent_discords=0.01, X=None, max_nan_frac=0.0, margin=0):
     """
-    Retourne les indices des top discord (= plus grandes valeurs du MP).
-    top_percent_discords: fraction (ex 0.01 pour 1%)
+    Retourne les indices centrés des top discord (= plus grandes valeurs du MP),
+    mais uniquement là où la fenêtre du signal contient <= max_nan_frac de NaN
+    et hors marge autour des NaN.
+    Le top_n est calculé APRÈS exclusion pour avoir le vrai top_percent_discords sur le signal exploitable.
     """
     P = mp[:, 0].astype(float)
     valid_idx = np.where(~np.isnan(P))[0]
-    top_n = max(1, int(top_percent_discords * len(valid_idx)))  # Toujours au moins 1
-    # Discords = indices des plus grandes valeurs du MP (dans valid_idx)
-    discords_idx = valid_idx[np.argsort(P[valid_idx])[-top_n:][::-1]]
+    
+    # Première passe : filtre sur la fenêtre du signal et la marge
+    discords_candidates = []
+    if X is not None:
+        nan_mask = np.isnan(X)
+        nan_indices = np.where(nan_mask)[0]
+        for idx in valid_idx:
+            start = idx
+            end = idx + window_size
+            if end > len(X):
+                continue
+            window = X[start:end]
+            nan_frac = np.isnan(window).mean()
+            # Exclure si la fenêtre contient trop de NaN
+            if nan_frac > max_nan_frac:
+                continue
+            # Exclure si la fenêtre est "proche" d'un NaN (à moins de `margin` points)
+            if margin > 0 and np.any(
+                (nan_indices >= start - margin) & (nan_indices < end + margin)
+            ):
+                continue
+            discords_candidates.append(idx)
+    else:
+        discords_candidates = list(valid_idx)
+    
+    # Calcul du top_n après filtre, pour obtenir le vrai top_percent_discords
+    top_n = max(1, int(top_percent_discords * len(discords_candidates)))
+    if top_n > len(discords_candidates):
+        top_n = len(discords_candidates)
+    # Tri des candidats selon la valeur du MP
+    sorted_idx = np.argsort(P[discords_candidates])[-top_n:][::-1]
+    discords_idx = np.array(discords_candidates)[sorted_idx]
     discords_centered = discords_idx + window_size // 2
-
     return discords_centered
 
 
+
 def discover_patterns_stumpy_mixed(
-    df, window_size, max_motifs=3, top_percent_discords=0.01, margin_discord=10,
+    df, window_size, max_motifs=3, top_percent_discords=0.01,
     max_matches=10):
     """
     - Détection des motifs principaux par stumpy.motifs (indices)
@@ -69,8 +100,8 @@ def discover_patterns_stumpy_mixed(
     # Ajuste l'index du DataFrame pour que sa longueur corresponde à celle de df
     df_profile_with_nan.index = df.index[:len(df_profile_with_nan)]
 
-    motif_distances, motif_indices = stumpy.motifs(X, mp[:, 0], max_matches=max_matches, max_motifs=max_motifs, normalize=False)
-    discords = exclude_discords(mp, window_size, top_percent_discords=top_percent_discords, margin=margin_discord)
+    motif_distances, motif_indices = stumpy.motifs(X, mp[:, 0], min_neighbors=0.5, max_matches=max_matches, max_motifs=max_motifs, normalize=False)
+    discords = exclude_discords(mp, window_size, top_percent_discords=top_percent_discords, X=X, max_nan_frac=0.1, margin=10)
 
     # Retourne seulement les indices des discordes
     results = []
@@ -81,8 +112,6 @@ def discover_patterns_stumpy_mixed(
             continue
         # Exclusion des motifs chevauchant des discord windows
         group_filtered = [idx for idx in group if idx not in discords]
-        if len(group_filtered) < max_matches :
-            continue
         # Extraction des segments
         segments = []
         half = window_size // 2
@@ -97,13 +126,9 @@ def discover_patterns_stumpy_mixed(
                 segment = X[start:end]
                 if len(segment) == window_size:
                     segments.append(segment)
+        core_idxs = np.array(group_filtered)
 
-        if len(segments) < max_matches :
-            continue
-        core_idxs = np.array(group_filtered[:max_matches ])
-
-        
-        core_segments = segments[:max_matches ]
+        core_segments = segments
         medoid_idx = medoid_index(core_segments)
 
         aligned = align_segments_to_reference(core_segments, core_segments[medoid_idx])

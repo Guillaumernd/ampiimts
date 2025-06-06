@@ -8,15 +8,12 @@ import stumpy as sp
 import faiss
 import os 
 os.environ["NUMBA_NUM_THREADS"] = "8"
-import matplotlib.pyplot as plt
-from .motif_pipeline import discover_univariate_patterns, discover_multivariate_patterns
-from .plotting import plot_matrix_profiles
 from .motif_pattern import discover_patterns_stumpy_mixed
 
 
 def matrix_profile_process(
         df_o: pd.DataFrame, window_size: Optional[int] = None, column=None, 
-        max_motifs=3, top_percent_discords=0.02, margin_discord=0,
+        max_motifs=3, top_percent_discords=0.02,
         max_matches=10):
     df = df_o.copy()
     if 'timestamp' in df.columns:
@@ -31,7 +28,7 @@ def matrix_profile_process(
     if df.shape[1] == 1:
         return discover_patterns_stumpy_mixed(
             df, window_size, max_motifs=max_motifs, 
-            top_percent_discords=top_percent_discords, margin_discord=margin_discord,
+            top_percent_discords=top_percent_discords,
             max_matches=max_matches)
     # ==== MULTIVARIATE ====
     else:
@@ -75,7 +72,6 @@ def matrix_profile(
     column: str = None, 
     max_motifs=3,
     top_percent_discords=0.02,
-    margin_discord=0,
     max_matches=10, 
 ) -> Union[pd.DataFrame, List[pd.DataFrame]]:
     """
@@ -114,7 +110,6 @@ def matrix_profile(
     df_profile = matrix_profile_process(df_o, window_size=window_size,
             column=column, max_motifs=max_motifs, 
             top_percent_discords=top_percent_discords,
-            margin_discord=margin_discord,
             max_matches=max_matches)
     # result = discover_univariate_patterns(
     #     df_o, df_profile, window_size, column)
