@@ -17,39 +17,28 @@ def align_segments_to_reference(segments, reference=None):
         aligned_segments.append(aligned)
     return np.array(aligned_segments)
 
-def filter_outlier_motifs(aligned_segments, threshold=5):
-    """Filtre les motifs trop loin de la moyenne (écart-type)."""
-    mean_curve = aligned_segments.mean(axis=0)
-    distances = np.linalg.norm(aligned_segments - mean_curve, axis=1)
-    median = np.median(distances)
-    std = np.std(distances)
-    mask = distances < (median + threshold * std)
-    return aligned_segments[mask], mask
-
 def medoid_index(segments):
     """Retourne l'indice du segment le plus proche de tous les autres (médoïde)."""
     D = np.array([[dtw(s1, s2) for s2 in segments] for s1 in segments])
     return np.argmin(D.sum(axis=1))
 
-def exclude_discords(mp, top_percent_discords=10, margin=0):
-    """Indices à exclure : les discord (= les plus grandes valeurs du matrix profile)."""
-    top_n = int(top_percent_discords * len(mp))
+def exclude_discords(mp, window_size, top_percent_discords=0.01, margin=0):
+    """
+    Retourne les indices des top discord (= plus grandes valeurs du MP).
+    top_percent_discords: fraction (ex 0.01 pour 1%)
+    """
     P = mp[:, 0].astype(float)
     valid_idx = np.where(~np.isnan(P))[0]
-    discords = valid_idx[np.argsort(P[valid_idx])[-top_n:][::-1]]
-    if margin > 0:
-        # Exclusion d'une marge autour des discord indices
-        mask = np.ones(len(P), dtype=bool)
-        for idx in discords:
-            mask[max(0, idx-margin):min(len(P), idx+margin+1)] = False
-        return discords, mask
-    else:
-        mask = np.ones(len(P), dtype=bool)
-        mask[discords] = False
-        return discords, mask
+    top_n = max(1, int(top_percent_discords * len(valid_idx)))  # Toujours au moins 1
+    # Discords = indices des plus grandes valeurs du MP (dans valid_idx)
+    discords_idx = valid_idx[np.argsort(P[valid_idx])[-top_n:][::-1]]
+    discords_centered = discords_idx + window_size // 2
+
+    return discords_centered
+
 
 def discover_patterns_stumpy_mixed(
-    df, window_size, max_motifs=3, top_percent_discords=0.01, margin_discord=0,
+    df, window_size, max_motifs=3, top_percent_discords=0.01, margin_discord=10,
     max_matches=10):
     """
     - Détection des motifs principaux par stumpy.motifs (indices)
@@ -64,27 +53,26 @@ def discover_patterns_stumpy_mixed(
     # Centrage de l'index du Matrix Profile
     columns = ['value', 'index_1', 'index_2', 'index_3']
     df_profile = pd.DataFrame(mp, columns=columns)
-    profile_len = len(df) - window_size + 1
+
+    # Calcul de la longueur et des indices centrés
+    profile_len = len(df) - window_size
     center_indices = np.arange(profile_len) + window_size // 2
-    center_indices = center_indices[center_indices < len(df)]
+
+    # Limiter la longueur de df_profile pour correspondre aux indices centrés
     df_profile = df_profile.iloc[:len(center_indices)]
     df_profile.index = df.index[center_indices]
 
+    # Ajouter des NaN au début et à la fin pour aligner visuellement le Matrix Profile
+    nan_values = np.full(window_size // 2, np.nan)  # Crée des NaN pour le début et la fin
+    df_profile_with_nan = pd.DataFrame(np.concatenate([nan_values, df_profile['value'].values, nan_values]), columns=['value'])
+
+    # Ajuste l'index du DataFrame pour que sa longueur corresponde à celle de df
+    df_profile_with_nan.index = df.index[:len(df_profile_with_nan)]
+
     motif_distances, motif_indices = stumpy.motifs(X, mp[:, 0], max_matches=max_matches, max_motifs=max_motifs, normalize=False)
-    discords, keep_mask = exclude_discords(mp, top_percent_discords=top_percent_discords, margin=margin_discord)
+    discords = exclude_discords(mp, window_size, top_percent_discords=top_percent_discords, margin=margin_discord)
 
-    # Gestion des indices de discord avec la sécurité de la fenêtre
-    safe_discords_centered = []
-    window_indices = np.arange(len(df) - window_size + 1)  # Indices valides pour les fenêtres
-    discord_idxs = np.argsort(mp[:, 0])[-int(top_percent_discords * len(mp)):][::-1]  # Top discords
-
-    for idx in discord_idxs:
-        # S'assurer que l'indice du discord est dans la plage autorisée
-        if 0 <= idx <= len(df) - window_size:
-            safe_discords_centered.append(
-                (window_indices[idx], window_indices[idx] + window_size)
-            )
-
+    # Retourne seulement les indices des discordes
     results = []
     for i in range(motif_indices.shape[0]):
         group = motif_indices[i]
@@ -92,7 +80,7 @@ def discover_patterns_stumpy_mixed(
         if len(group) == 0:
             continue
         # Exclusion des motifs chevauchant des discord windows
-        group_filtered = [idx for idx in group if keep_mask[idx]]
+        group_filtered = [idx for idx in group if idx not in discords]
         if len(group_filtered) < max_matches :
             continue
         # Extraction des segments
@@ -133,7 +121,7 @@ def discover_patterns_stumpy_mixed(
 
     return {
         "patterns": results,
-        "matrix_profile": df_profile,   # <-- DataFrame indexé sur le centre
-        "discord_indices": safe_discords_centered,  # Renvoie les indices des zones de discord
+        "matrix_profile": df_profile_with_nan,   # <-- DataFrame avec NaN ajouté
+        "discord_indices": discords,  # Renvoie seulement les indices des discord
         "window_size": window_size
     }

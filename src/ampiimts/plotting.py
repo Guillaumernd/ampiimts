@@ -199,11 +199,10 @@ def plot_aligned_motifs(
     plt.tight_layout()
     plt.show()
 
-
 def plot_patterns_and_discords(df, result, column='value', figsize=(12, 6)):
     """
     Plot the original signal with identified motifs and discords, where each motif
-    is plotted in a distinct color, and discords are highlighted as shaded zones.
+    is plotted in a distinct color, and discords are highlighted as vertical lines.
     Additionally, vertical lines are added at the start and end of each motif zone.
     Matrix Profile is plotted on a secondary y-axis.
 
@@ -228,13 +227,8 @@ def plot_patterns_and_discords(df, result, column='value', figsize=(12, 6)):
     matrix_profile_values = result["matrix_profile"]['value']
     window_size = result["window_size"]
     
-    # Centrer l'index du Matrix Profile en utilisant ta méthode
-    profile_len = len(df) - window_size + 1
-    center_indices = np.arange(profile_len) + window_size // 2
-    center_indices = center_indices[center_indices < len(df)]
-    
     # Align the matrix profile indices with the signal index
-    matrix_profile_indices = df.index[center_indices]
+    matrix_profile_indices = df.index
 
     # Check for size consistency between indices and values
     if len(matrix_profile_indices) != len(matrix_profile_values):
@@ -259,14 +253,17 @@ def plot_patterns_and_discords(df, result, column='value', figsize=(12, 6)):
             ax1.axvline(df.index[motif_range[0]], color='green', linestyle='--', linewidth=2)
             ax1.axvline(df.index[motif_range[1]], color='red', linestyle='--', linewidth=1)
 
-    # Plot discords as shaded regions (using the pre-calculated discord zones)
+    # Plot discords as vertical lines
     for discord in result['discord_indices']:
-        ax1.fill_between(df.index[discord[0]:discord[1]], df[column].min(), df[column].max(), color='red', alpha=0.3)
+        # Draw a vertical line at the discord index
+        ax1.axvline(df.index[discord], color='red', linestyle='-', linewidth=2)
 
     # Labeling the plot
     ax1.set_title("Motifs, Discords, and Matrix Profile Detected")
     ax1.legend(loc='upper right')
     ax2.legend(loc='upper left')
     ax1.grid(True)
-    plt.tight_layout()
+    
+    # Adjust layout to avoid overlap
+    plt.tight_layout(pad=3.0)
     plt.show()
