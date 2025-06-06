@@ -1,4 +1,5 @@
-"""Preprocessed module for panda DataFrame with timestamp column."""
+"""Preprocessing utilities for time series with a timestamp index."""
+
 from typing import Union, List
 from collections import Counter
 from joblib import Parallel, delayed
@@ -11,8 +12,7 @@ import time
 
 
 def synchronize_on_common_grid(
-    dfs: List[pd.DataFrame],
-    gap_multiplier: float = 15
+    dfs: List[pd.DataFrame], gap_multiplier: float = 15
 ) -> List[pd.DataFrame]:
     """
     Synchronize multiple time series DataFrames on a common regular time grid.
@@ -81,12 +81,13 @@ def synchronize_on_common_grid(
     min_time = min(df.index.min() for df in dfs)
     max_time = max(df.index.max() for df in dfs)
     reference_index = pd.date_range(
-        start=min_time, end=max_time, freq=common_freq)
+        start=min_time, end=max_time, freq=common_freq
+    )
     # Reindexation and interpolation on same timestamp for all dataframes
     dfs_synced = [
-        df.reindex(
-            reference_index).interpolate(
-                method="time", limit_direction="both")
+        df.reindex(reference_index).interpolate(
+            method="time", limit_direction="both"
+        )
         for df in dfs
     ]
     return dfs_synced
@@ -149,8 +150,9 @@ def interpolate(df: pd.DataFrame, gap_multiplier: float = 15) -> pd.DataFrame:
     diffs = idx.to_series().diff()
     seg_ids = (diffs > max_gap).cumsum()
     seg_index = pd.Series(seg_ids.values, index=idx)
-    seg_union = seg_index.reindex(
-        union_idx, method="ffill").fillna(0).astype(int)
+    seg_union = (
+        seg_index.reindex(union_idx, method="ffill").fillna(0).astype(int)
+    )
     seg_union = seg_union.infer_objects(copy=False)
     df_interp = df_union.groupby(seg_union, group_keys=False).apply(
         lambda seg: seg.interpolate(method="time", limit_direction="both")
@@ -178,7 +180,7 @@ def _compute_aswn(
     values: np.ndarray,
     window_size: int,
     min_std: float,
-    min_valid_ratio: float
+    min_valid_ratio: float,
 ) -> np.ndarray:
     """
     Fast local window normalization (ASWN) with Numba.
@@ -285,7 +287,8 @@ def normalization(
         )
     else:
         raise RuntimeError(
-            "Window size isn't a str (e.g. : 1D, 1h, 1S etc...)")
+            "Window size isn't a str (e.g. : 1D, 1h, 1S etc...)"
+        )
     for col in df.columns:
         if pd.api.types.is_numeric_dtype(df[col]):
             df[col] = aswn_with_trend(
@@ -301,7 +304,7 @@ def define_m_using_clustering(
     window_sizes: list = None,
     max_points: int = 4000,
     max_window_sizes: int = 12,
-    n_jobs: int = -1
+    n_jobs: int = -1,
 ) -> list[tuple[int, str, float]]:
     """
     Determines the best window sizes for motif extraction in a time series
@@ -332,8 +335,23 @@ def define_m_using_clustering(
     # Set a default window_sizes list if none provided
     if window_sizes is None:
         window_sizes = [
-            "1s", "15s", "30s", "1m", "5m", "10m", "15m", "30m", "1h", "3h",
-            "12h", "24h", "48h", "72h", "168h", "744h"]
+            "1s",
+            "15s",
+            "30s",
+            "1m",
+            "5m",
+            "10m",
+            "15m",
+            "30m",
+            "1h",
+            "3h",
+            "12h",
+            "24h",
+            "48h",
+            "72h",
+            "168h",
+            "744h",
+        ]
 
     # Compute the median time interval between samples
     freq = df.index.to_series().diff().median()
@@ -344,9 +362,9 @@ def define_m_using_clustering(
         (int(pd.Timedelta(ws) / freq), ws)
         for ws in window_sizes
         if (
-            pd.Timedelta(ws) >= freq and
-            int(pd.Timedelta(ws) / freq) >= 10 and
-            int(pd.Timedelta(ws) / freq) < len(df) // 4
+            pd.Timedelta(ws) >= freq
+            and int(pd.Timedelta(ws) / freq) >= 10
+            and int(pd.Timedelta(ws) / freq) < len(df) // 4
         )
     ]
 
@@ -375,9 +393,7 @@ def define_m_using_clustering(
         """
         # Try to extract all possible sliding window segments
         try:
-            segments = np.lib.stride_tricks.sliding_window_view(
-                values, ws_pts
-            )
+            segments = np.lib.stride_tricks.sliding_window_view(values, ws_pts)
         except ValueError:
             # Not enough data points for this window size
             return None
@@ -386,9 +402,9 @@ def define_m_using_clustering(
             # Not enough segments to compare
             return None
         # Normalize each segment (z-score)
-        segments = (
-            segments - segments.mean(axis=1, keepdims=True)
-        ) / (segments.std(axis=1, keepdims=True) + 1e-8)
+        segments = (segments - segments.mean(axis=1, keepdims=True)) / (
+            segments.std(axis=1, keepdims=True) + 1e-8
+        )
         # Create a FAISS index for L2 (Euclidean) distance
         index = faiss.IndexFlatL2(ws_pts)
         # Add all segments to the FAISS index
@@ -464,23 +480,27 @@ def pre_processed(
     window_size_forward = None
     if not (
         isinstance(df, pd.DataFrame)
-        or (isinstance(df, list)
-            and all(isinstance(x, pd.DataFrame) for x in df))
-            ):
+        or (
+            isinstance(df, list)
+            and all(isinstance(x, pd.DataFrame) for x in df)
+        )
+    ):
         raise TypeError("df must be a pd.DataFrame or a list of pd.DataFrame")
 
     if isinstance(df, list):
         dataframes = df.copy()
         dataframes = [
             df.drop(
-                [c for c in ['latitude', 'longitude']
-                 if c in df.columns], axis=1
+                [c for c in ["latitude", "longitude"] if c in df.columns],
+                axis=1,
             )
-            for df in dataframes]
+            for df in dataframes
+        ]
         dataframes = synchronize_on_common_grid(dataframes)
-        numeric_cols_lists_by_df = [sorted(
-            df.select_dtypes(
-                include=[np.number]).columns.tolist()) for df in dataframes]
+        numeric_cols_lists_by_df = [
+            sorted(df.select_dtypes(include=[np.number]).columns.tolist())
+            for df in dataframes
+        ]
         ref_name_dataframe = numeric_cols_lists_by_df[0]
         for idx, cols in enumerate(numeric_cols_lists_by_df[1:], 1):
             if cols != ref_name_dataframe:
@@ -489,7 +509,7 @@ def pre_processed(
                     "columns as DataFrame 0:\n"
                     f"Reference: {ref_name_dataframe}\nCurrent: {cols}"
                 )
-                
+
         if sort_by_variables:
             # Ici, on laisse TOUT comme avant !!
             dataframes_by_variable = []
@@ -497,8 +517,11 @@ def pre_processed(
                 cols_for_this_var = []
                 for i, df_ in enumerate(dataframes):
                     col_name_numerate = f"{col_name}_{i}"
-                    df_col = df_[[col_name]].copy().rename(
-                        columns={col_name: col_name_numerate})
+                    df_col = (
+                        df_[[col_name]]
+                        .copy()
+                        .rename(columns={col_name: col_name_numerate})
+                    )
                     cols_for_this_var.append(df_col)
                 df_by_variable = pd.concat(cols_for_this_var, axis=1)
                 df_by_variable.index = dataframes[0].index
@@ -509,7 +532,9 @@ def pre_processed(
             for df_preprocessed in dataframes:
                 if window_size is None:
                     # On garde le calcul INDIVIDUEL
-                    window_size_forward = define_m_using_clustering(df_preprocessed)
+                    window_size_forward = define_m_using_clustering(
+                        df_preprocessed
+                    )
                     window_size_forward = window_size_forward[0][1]
                 else:
                     window_size_forward = window_size
@@ -536,7 +561,9 @@ def pre_processed(
                     else:
                         ms.append(wins)
                 window_size_forward = Counter(ms).most_common(1)[0][0]
-                print(f"Most frequent window size after 3 runs (all dfs): {window_size_forward}")
+                print(
+                    f"Most frequent window size after 3 runs (all dfs): {window_size_forward}"
+                )
             else:
                 window_size_forward = window_size
 
@@ -574,7 +601,7 @@ def pre_processed(
 
 
 def missing_values(
-        df: pd.DataFrame, percent_missing: float = 0.2, random_state: int = 1
+    df: pd.DataFrame, percent_missing: float = 0.2, random_state: int = 1
 ) -> pd.DataFrame:
     """
     Simulate random missing data in all columns, including timestamp, in a
@@ -612,9 +639,10 @@ def missing_values(
     if isinstance(df_copy.index, pd.DatetimeIndex):
         name = df_copy.index.name or "timestamp"
         df_copy = df_copy.reset_index().rename(columns={name: "timestamp"})
-    elif ("timestamp" in df_copy.columns
-          and pd.api.types.is_datetime64_any_dtype(df_copy["timestamp"])
-          ):
+    elif (
+        "timestamp" in df_copy.columns
+        and pd.api.types.is_datetime64_any_dtype(df_copy["timestamp"])
+    ):
         pass
     else:
         dt_cols = [
@@ -626,7 +654,8 @@ def missing_values(
             df_copy = df_copy.rename(columns={dt_cols[0]: "timestamp"})
         else:
             df_copy = df_copy.reset_index().rename(
-                columns={"index": "timestamp"})
+                columns={"index": "timestamp"}
+            )
 
     # 3. Convert index to datetime (for safety)
     df_copy.index = pd.to_datetime(df_copy.index, errors="coerce")
