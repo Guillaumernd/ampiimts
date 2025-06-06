@@ -1,10 +1,12 @@
+"""Motif discovery helpers built on top of STUMPY."""
+
 import numpy as np
 import pandas as pd
 import stumpy
 from tslearn.metrics import dtw, dtw_path
 
 def align_segments_to_reference(segments, reference=None):
-    """Aligne chaque segment sur la médoïde en utilisant DTW."""
+    """Align each segment on the medoid using DTW."""
     if reference is None:
         reference = segments[0]
     aligned_segments = []
@@ -18,21 +20,23 @@ def align_segments_to_reference(segments, reference=None):
     return np.array(aligned_segments)
 
 def medoid_index(segments):
-    """Retourne l'indice du segment le plus proche de tous les autres (médoïde)."""
+    """Return the index of the segment closest to all others (the medoid)."""
     D = np.array([[dtw(s1, s2) for s2 in segments] for s1 in segments])
     return np.argmin(D.sum(axis=1))
 
-def exclude_discords(mp, window_size, top_percent_discords=0.01, X=None, max_nan_frac=0.0, margin=0):
-    """
-    Retourne les indices centrés des top discord (= plus grandes valeurs du MP),
-    mais uniquement là où la fenêtre du signal contient <= max_nan_frac de NaN
-    et hors marge autour des NaN.
-    Le top_n est calculé APRÈS exclusion pour avoir le vrai top_percent_discords sur le signal exploitable.
+def exclude_discords(
+    mp, window_size, top_percent_discords=0.01, X=None, max_nan_frac=0.0, margin=0
+):
+    """Return centered indices of the top discords.
+
+    Only windows with less than ``max_nan_frac`` NaN values and outside the
+    given margin around NaNs are considered. The top N is computed after this
+    filtering so that ``top_percent_discords`` truly applies to usable data.
     """
     P = mp[:, 0].astype(float)
     valid_idx = np.where(~np.isnan(P))[0]
     
-    # Première passe : filtre sur la fenêtre du signal et la marge
+    # First pass: filter windows based on NaN ratio and margin around NaNs
     discords_candidates = []
     if X is not None:
         nan_mask = np.isnan(X)
@@ -44,10 +48,10 @@ def exclude_discords(mp, window_size, top_percent_discords=0.01, X=None, max_nan
                 continue
             window = X[start:end]
             nan_frac = np.isnan(window).mean()
-            # Exclure si la fenêtre contient trop de NaN
+            # Skip if the window contains too many NaNs
             if nan_frac > max_nan_frac:
                 continue
-            # Exclure si la fenêtre est "proche" d'un NaN (à moins de `margin` points)
+            # Skip if the window is close to a NaN (within ``margin`` points)
             if margin > 0 and np.any(
                 (nan_indices >= start - margin) & (nan_indices < end + margin)
             ):
@@ -56,11 +60,11 @@ def exclude_discords(mp, window_size, top_percent_discords=0.01, X=None, max_nan
     else:
         discords_candidates = list(valid_idx)
     
-    # Calcul du top_n après filtre, pour obtenir le vrai top_percent_discords
+    # Compute top_n after filtering to apply ``top_percent_discords`` on valid data
     top_n = max(1, int(top_percent_discords * len(discords_candidates)))
     if top_n > len(discords_candidates):
         top_n = len(discords_candidates)
-    # Tri des candidats selon la valeur du MP
+    # Sort candidates by matrix profile value
     sorted_idx = np.argsort(P[discords_candidates])[-top_n:][::-1]
     discords_idx = np.array(discords_candidates)[sorted_idx]
     discords_centered = discords_idx + window_size // 2
@@ -71,39 +75,37 @@ def exclude_discords(mp, window_size, top_percent_discords=0.01, X=None, max_nan
 def discover_patterns_stumpy_mixed(
     df, window_size, max_motifs=3, top_percent_discords=0.01,
     max_matches=10):
-    """
-    - Détection des motifs principaux par stumpy.motifs (indices)
-    - Exclusion des discord windows (par indices et marge éventuelle)
-    - Alignement DTW sur la médoïde, filtrage des motifs éloignés
-    - Retourne par motif : segments alignés, indice de la médoïde, indices des motifs, discord indices
-    - TOUS les indices sont CENTRÉS (alignés au centre de la fenêtre)
+    """Detect motifs and discords on a univariate signal.
+
+    The function returns all motif segments aligned on the medoid as well as the
+    indices of discord windows. All indices are centered on the sliding window.
     """
     X = df["value"].values
     mp = stumpy.stump(X, window_size, normalize=False)
 
-    # Centrage de l'index du Matrix Profile
+    # Center the matrix profile indices
     columns = ['value', 'index_1', 'index_2', 'index_3']
     df_profile = pd.DataFrame(mp, columns=columns)
 
-    # Calcul de la longueur et des indices centrés
+    # Compute length and centered indices
     profile_len = len(df) - window_size
     center_indices = np.arange(profile_len) + window_size // 2
 
-    # Limiter la longueur de df_profile pour correspondre aux indices centrés
+    # Limit df_profile length to match centered indices
     df_profile = df_profile.iloc[:len(center_indices)]
     df_profile.index = df.index[center_indices]
 
-    # Ajouter des NaN au début et à la fin pour aligner visuellement le Matrix Profile
-    nan_values = np.full(window_size // 2, np.nan)  # Crée des NaN pour le début et la fin
+    # Add NaN at beginning and end for visual alignment of the matrix profile
+    nan_values = np.full(window_size // 2, np.nan)
     df_profile_with_nan = pd.DataFrame(np.concatenate([nan_values, df_profile['value'].values, nan_values]), columns=['value'])
 
-    # Ajuste l'index du DataFrame pour que sa longueur corresponde à celle de df
+    # Adjust DataFrame index so its length matches ``df``
     df_profile_with_nan.index = df.index[:len(df_profile_with_nan)]
 
     motif_distances, motif_indices = stumpy.motifs(X, mp[:, 0], min_neighbors=0.5, max_matches=max_matches, max_motifs=max_motifs, normalize=False)
     discords = exclude_discords(mp, window_size, top_percent_discords=top_percent_discords, X=X, max_nan_frac=0.1, margin=10)
 
-    # Retourne seulement les indices des discordes
+    # Return only the discord indices along with motif information
     results = []
     for i in range(motif_indices.shape[0]):
         group = motif_indices[i]
@@ -157,3 +159,4 @@ def discover_patterns_stumpy_mixed(
         "discord_indices": discords,  # Renvoie seulement les indices des discord
         "window_size": window_size,
     }
+
