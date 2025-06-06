@@ -198,72 +198,95 @@ def plot_aligned_motifs(
     plt.legend()
     plt.tight_layout()
     plt.show()
-
 def plot_patterns_and_discords(df, result, column='value', figsize=(12, 6)):
     """
-    Plot the original signal with identified motifs and discords, where each motif
-    is plotted in a distinct color, and discords are highlighted as vertical lines.
-    Additionally, vertical lines are added at the start and end of each motif zone.
-    Matrix Profile is plotted on a secondary y-axis.
-
-    Args:
-        df (pd.DataFrame): Original DataFrame with the time series data.
-        result (dict): Output from discover_patterns_stumpy_mixed function.
-        column (str): Column to plot (default is 'value').
-        figsize (tuple): Size of the plot (default is (12, 6)).
+    Plot the original signal with identified motifs (affichés à partir de leur indice de début),
+    les discordes en lignes verticales, et le Matrix Profile centré.
+    En sous-figure : tous les motifs alignés par pattern avec la médoïde en noir.
     """
-    # Create the figure
-    fig, ax1 = plt.subplots(figsize=figsize)
 
-    # Plot the original signal on the primary axis
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    motif_colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple']
+    n_patterns = len(result['patterns'])
+    window_size = result['window_size']
+    half = window_size // 2
+
+    fig, axs = plt.subplots(2, 1, figsize=(figsize[0], figsize[1]*1.6), gridspec_kw={'height_ratios': [2, n_patterns]})
+
+    # -- SUBPLOT 1 : Signal, motifs, discords, MP --
+    ax1 = axs[0]
+
+    # Signal original
     ax1.plot(df.index, df[column], label='Original Signal', color='black', alpha=0.5)
     ax1.set_xlabel("Timestamp")
     ax1.set_ylabel(column)
-    
-    # Create a secondary y-axis for the Matrix Profile
-    ax2 = ax1.twinx()
 
-    # Align Matrix Profile with the correct x-axis, considering the window size
+    # Matrix Profile (centré !)
     matrix_profile_values = result["matrix_profile"]['value']
     window_size = result["window_size"]
-    
-    # Align the matrix profile indices with the signal index
-    matrix_profile_indices = df.index
-
-    # Check for size consistency between indices and values
-    if len(matrix_profile_indices) != len(matrix_profile_values):
-        print(f"Warning: Mismatch between Matrix Profile indices ({len(matrix_profile_indices)}) and values ({len(matrix_profile_values)}). Trimming excess values.")
-        matrix_profile_values = matrix_profile_values[:len(matrix_profile_indices)]
-
-    # Plot the Matrix Profile on the secondary axis
-    ax2.plot(matrix_profile_indices, matrix_profile_values, label='Matrix Profile', color='blue', alpha=0.6)
+    mp_len = len(matrix_profile_values)
+    # Indices X du MP centré
+    center_indices = np.arange(mp_len)
+    ax2 = ax1.twinx()
+    ax2.plot(df.index[center_indices], matrix_profile_values, label='Matrix Profile', color='blue', alpha=0.6)
     ax2.set_ylabel('Matrix Profile')
 
-    # Plot motifs for each pattern with distinct colors
-    motif_colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple']
+    # Motifs détectés (indice de début !)
     for i, pattern in enumerate(result['patterns']):
-        color = motif_colors[i % len(motif_colors)]  # Use color cycle if more than 5 patterns
-        for motif_idx, motif_range in enumerate(pattern["all_motif_indices"]):
-            # Plot the motif
-            ax1.plot(df.index[motif_range[0]:motif_range[1]], 
-                     df[column].iloc[motif_range[0]:motif_range[1]], 
-                     color=color, label=f"{pattern['pattern_label']} motif {motif_idx+1}" if motif_idx == 0 else "", linewidth=2)
-            
-            # Add vertical lines at the start and end of the motif
-            ax1.axvline(df.index[motif_range[0]], color='green', linestyle='--', linewidth=2)
-            ax1.axvline(df.index[motif_range[1]], color='red', linestyle='--', linewidth=1)
+        color = motif_colors[i % len(motif_colors)]
+        # Ici, on prend les indices de début des motifs (PAS les indices centrés)
+        motif_debuts = pattern["motif_indices_debut"]
+        for motif_idx, idx_debut in enumerate(motif_debuts):
+            start = idx_debut
+            end = idx_debut + window_size
+            if start >= 0 and end <= len(df):
+                ax1.plot(df.index[start:end],
+                         df[column].iloc[start:end],
+                         color=color,
+                         label=f"{pattern['pattern_label']} motif {motif_idx+1}" if motif_idx == 0 else "",
+                         linewidth=2)
+                # Début, centre, fin
+                ax1.axvline(df.index[start], color='green', linestyle='--', linewidth=2)
+                ax1.axvline(df.index[start + window_size // 2], color='purple', linestyle=':', linewidth=1)
+                ax1.axvline(df.index[end-1], color='red', linestyle='--', linewidth=1)
 
-    # Plot discords as vertical lines
+    # Discords en lignes verticales
     for discord in result['discord_indices']:
-        # Draw a vertical line at the discord index
-        ax1.axvline(df.index[discord], color='red', linestyle='-', linewidth=2)
+        if discord < len(df):
+            ax1.axvline(df.index[discord], color='red', linestyle='-', linewidth=2)
 
-    # Labeling the plot
-    ax1.set_title("Motifs, Discords, and Matrix Profile Detected")
-    ax1.legend(loc='upper right')
-    ax2.legend(loc='upper left')
+    ax1.set_title("Motifs (début de fenêtre), Discords, and Matrix Profile Detected")
+    handles1, labels1 = ax1.get_legend_handles_labels()
+    handles2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(handles1 + handles2, labels1 + labels2, loc='upper right')
     ax1.grid(True)
-    
-    # Adjust layout to avoid overlap
+
+    # -- SUBPLOT 2 : Les motifs alignés par pattern --
+    ax_motif = axs[1]
+    motif_len = result['patterns'][0]['aligned_motifs'].shape[1] if n_patterns else 0
+    motif_x = np.arange(motif_len)
+    legend_shown = [False] * n_patterns
+
+    for i, pattern in enumerate(result['patterns']):
+        color = motif_colors[i % len(motif_colors)]
+        motifs = pattern['aligned_motifs']
+        medoid_idx = np.argmin([
+            np.sum([np.linalg.norm(motifs[j] - motifs[k]) for k in range(len(motifs))])
+            for j in range(len(motifs))
+        ])
+        for j, motif in enumerate(motifs):
+            ax_motif.plot(motif_x, motif, color=color, alpha=0.4, linewidth=1,
+                          label=f"{pattern['pattern_label']} motifs" if not legend_shown[i] and j == 0 else None)
+            legend_shown[i] = True
+        ax_motif.plot(motif_x, motifs[medoid_idx], color='black', linewidth=3, label=f"{pattern['pattern_label']} medoid")
+
+    ax_motif.set_title("All motifs per pattern (médoïde en noir)")
+    ax_motif.set_xlabel("Relative index in window")
+    ax_motif.set_ylabel("value")
+    ax_motif.legend()
+    ax_motif.grid(True)
+
     plt.tight_layout(pad=3.0)
     plt.show()

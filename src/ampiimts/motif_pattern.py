@@ -76,7 +76,7 @@ def discover_patterns_stumpy_mixed(
     results = []
     for i in range(motif_indices.shape[0]):
         group = motif_indices[i]
-        group = [int(np.atleast_1d(idx)[0]) for idx in group]
+        group = [int(np.atleast_1d(idx)[0]) + window_size // 2 for idx in group]
         if len(group) == 0:
             continue
         # Exclusion des motifs chevauchant des discord windows
@@ -85,19 +85,24 @@ def discover_patterns_stumpy_mixed(
             continue
         # Extraction des segments
         segments = []
-        for idx in group_filtered:
-            if idx + window_size <= len(X):  # Assurer que le segment ne dépasse pas la taille du signal
-                segment = X[idx:idx + window_size]
-                if len(segment) == window_size:  # Vérifier que la longueur du segment est correcte
+        half = window_size // 2
+        for center in group_filtered:
+            if window_size % 2 == 0:
+                start = center - half
+                end = center + half
+            else:
+                start = center - half
+                end = center + half + 1
+            if start >= 0 and end <= len(X):
+                segment = X[start:end]
+                if len(segment) == window_size:
                     segments.append(segment)
 
-        # Convertir les segments en un tableau numpy une fois tous les segments extraits
-        segments = np.array(segments)
-        group_filtered = [idx for idx in group_filtered if idx + window_size <= len(X)]
         if len(segments) < max_matches :
             continue
-        # Sélectionne le cœur
         core_idxs = np.array(group_filtered[:max_matches ])
+
+        
         core_segments = segments[:max_matches ]
         medoid_idx = medoid_index(core_segments)
 
@@ -105,23 +110,25 @@ def discover_patterns_stumpy_mixed(
 
         # >>> Calcule la médoïde locale sur le sous-ensemble aligné <<<
         medoid_idx_local = medoid_index(aligned)
-        medoid_value_idx = int(core_idxs[medoid_idx_local]) + window_size // 2
+        medoid_value_idx = int(core_idxs[medoid_idx_local])
 
         # Centrage des indices de motifs alignés
         all_motif_centered = [
-            (int(idx) + window_size // 2, int(idx) + window_size // 2 + window_size) for idx in core_idxs
+            (int(idx), int(idx) + window_size) for idx in core_idxs
         ]
 
         results.append({
             "pattern_label": f"motif_{i+1}",
             "aligned_motifs": aligned,
             "all_motif_indices": all_motif_centered,
-            "medoid_idx": medoid_value_idx
+            "medoid_idx": medoid_value_idx,
+            "motif_indices_debut": [int(np.atleast_1d(idx)[0]) for idx in group]
+
         })
 
     return {
         "patterns": results,
         "matrix_profile": df_profile_with_nan,   # <-- DataFrame avec NaN ajouté
         "discord_indices": discords,  # Renvoie seulement les indices des discord
-        "window_size": window_size
+        "window_size": window_size,
     }
