@@ -64,9 +64,9 @@ def synchronize_on_common_grid(
         (dfs, interpolate_func=my_interpolate)
     >>> # Now, synced[0].index == synced[1].index == ... for all dataframes
     """
-    # independante interpolation
+    # Independent interpolation
     dfs = [interpolate(df, gap_multiplier=gap_multiplier) for df in dfs]
-    # freq by dataframe
+    # Sampling frequency for each DataFrame
     freqs = [df.index.to_series().diff().median() for df in dfs]
     freqs_seconds = [f.total_seconds() for f in freqs]
     median_freq = np.median(freqs_seconds)
@@ -82,7 +82,7 @@ def synchronize_on_common_grid(
     max_time = max(df.index.max() for df in dfs)
     reference_index = pd.date_range(
         start=min_time, end=max_time, freq=common_freq)
-    # Reindexation and interpolation on same timestamp for all dataframes
+    # Reindex and interpolate on the same timestamp for all DataFrames
     dfs_synced = [
         df.reindex(
             reference_index).interpolate(
@@ -162,12 +162,12 @@ def interpolate(df: pd.DataFrame, gap_multiplier: float = 15) -> pd.DataFrame:
     gap_mask = pd.Series(False, index=df_out.index)
     for prev, nxt in zip(idx[:-1], idx[1:]):
         if nxt - prev > max_gap:
-            # Marque tous les points entre prev
-            #  (exclu) et nxt (inclus) comme gap
+            # Mark all points between ``prev`` (exclusive) and ``nxt`` (inclusive)
+            # as belonging to a gap
             in_gap = (df_out.index > prev) & (df_out.index <= nxt)
             gap_mask |= in_gap
 
-    # Met à NaN partout où il y a un gap
+    # Insert NaN wherever a gap has been detected
     df_out.loc[gap_mask, :] = np.nan
 
     return df_out
@@ -461,6 +461,33 @@ def pre_processed(
     window_size: str = None,
     sort_by_variables: bool = True,
 ) -> pd.DataFrame:
+    """Full preprocessing pipeline for one or several DataFrames.
+
+    Parameters
+    ----------
+    df : DataFrame or list of DataFrame
+        Input data to preprocess.
+    gap_multiplier : float, optional
+        Maximum gap in multiples of the base frequency considered for
+        interpolation.
+    min_std : float, optional
+        Minimum standard deviation used during normalization.
+    min_valid_ratio : float, optional
+        Minimum ratio of valid samples in the sliding window.
+    alpha : float, optional
+        Trend blending coefficient for ASWN normalization.
+    window_size : str, optional
+        Window size as pandas offset string (e.g. ``"1h"``). If ``None`` it is
+        estimated.
+    sort_by_variables : bool, optional
+        Whether to preprocess each variable independently when ``df`` is a list.
+
+    Returns
+    -------
+    DataFrame or list of DataFrame
+        Preprocessed data ready for motif discovery.
+    """
+
     window_size_forward = None
     if not (
         isinstance(df, pd.DataFrame)
@@ -491,7 +518,7 @@ def pre_processed(
                 )
                 
         if sort_by_variables:
-            # Ici, on laisse TOUT comme avant !!
+            # Process each variable independently
             dataframes_by_variable = []
             for col_name in ref_name_dataframe:
                 cols_for_this_var = []
@@ -508,7 +535,7 @@ def pre_processed(
             dataframes_preprocessed = []
             for df_preprocessed in dataframes:
                 if window_size is None:
-                    # On garde le calcul INDIVIDUEL
+                    # Compute the window size individually for each DataFrame
                     window_size_forward = define_m_using_clustering(df_preprocessed)
                     window_size_forward = window_size_forward[0][1]
                 else:
@@ -525,7 +552,7 @@ def pre_processed(
             return dataframes_preprocessed
 
         else:
-            # sort_by_variables == False → window_size unique pour tous
+            # sort_by_variables == False -> same window size for all DataFrames
             if window_size is None:
                 ms = []
                 df_ref = dataframes[0]
@@ -646,3 +673,4 @@ def missing_values(
     df_missing.index = pd.to_datetime(df_missing.index, errors="coerce")
 
     return df_missing
+

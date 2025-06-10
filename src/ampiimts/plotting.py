@@ -1,6 +1,8 @@
+"""Plotting utilities for time series results."""
+
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd 
+import pandas as pd
 import seaborn as sns
 
 
@@ -92,10 +94,11 @@ def plot_all_variables_multiple_dfs(dfs, labels=None, variables=None, figsize_pe
         plt.show()
 
 def plot_patterns_and_discords(df, result, column='value', figsize=(12, 6)):
-    """
-    Plot the original signal with identified motifs (affichés à partir de leur indice de début),
-    les discordes en lignes verticales, et le Matrix Profile centré.
-    En sous-figure : tous les motifs alignés par pattern avec la médoïde en noir.
+    """Plot signal, detected motifs and discords along with the matrix profile.
+
+    Motifs are drawn from their start index while discords are shown as vertical
+    lines. Below the main plot, all motifs for each pattern are aligned with the
+    medoid in black.
     """
 
     import matplotlib.pyplot as plt
@@ -183,3 +186,4 @@ def plot_patterns_and_discords(df, result, column='value', figsize=(12, 6)):
 
     plt.tight_layout(pad=3.0)
     plt.show()
+
