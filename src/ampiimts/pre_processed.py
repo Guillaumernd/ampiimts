@@ -8,7 +8,7 @@ import pandas as pd
 from numba import njit
 import faiss
 import time
-
+import random
 
 def synchronize_on_common_grid(
     dfs: List[pd.DataFrame],
@@ -298,158 +298,114 @@ def normalization(
 def define_m_using_clustering(
     df: pd.DataFrame,
     k: int = 3,
-    window_sizes: list = None,
+    window_sizes: list[str] = None,
     max_points: int = 4000,
     max_window_sizes: int = 12,
+    max_segments: int = 2000,
     n_jobs: int = -1
-) -> list[tuple[int, str, float]]:
+) -> list[tuple[int, str, float, float]]:
     """
     Determines the best window sizes for motif extraction in a time series
-    using clustering.
-
-    This function applies a sliding window approach on each numeric column,
-    normalizes each segment, and uses the FAISS library to find the
-    nearest-neighbor distances for various window sizes. It selects the
-    window sizes with the most repetitive and stable motifs using a
-    consensus-based method across variables.
+    using clustering. Handles empty or oversized cases gracefully.
 
     Args:
-        df (pd.DataFrame): Input DataFrame with a DatetimeIndex. Columns
-            must be numeric for analysis.
-        k (int): Number of top window sizes to return per variable.
-        window_sizes (list of str, optional): List of window sizes to test
-            (e.g., ['1m', '1h', '24h']). If None, a default set is used.
-        max_points (int): Maximum number of points to use from the series
-            (for speed; the series will be subsampled if longer).
-        max_window_sizes (int): Maximum number of window sizes to test.
-        n_jobs (int): Number of CPU cores to use for parallel computation.
+        df: DataFrame with DatetimeIndex and numeric columns.
+        k: Number of top window sizes per variable.
+        window_sizes: List of pandas offsets (e.g. ['1m','1h']).
+        max_points: Max total points to subsample for speed.
+        max_window_sizes: Max distinct window sizes to test.
+        max_segments: Max sliding-window segments to index per WS.
+        n_jobs: Cores for parallel.
 
     Returns:
-        list of tuple: Each tuple contains (window_size_in_points,
-        window_size_as_string, stability_score, density_score). The best
-        consensus window size(s) are returned.
+        List of tuples: (ws_pts, ws_str, stability_score, density_score).
     """
-    # Set a default window_sizes list if none provided
+    # Default window sizes
     if window_sizes is None:
         window_sizes = [
-            "1s", "15s", "30s", "1m", "5m", "10m", "15m", "30m", "1h", "3h",
-            "12h", "24h", "48h", "72h", "168h", "744h"]
+            "1s","15s","30s","1m","5m","10m","15m","30m",
+            "1h","2h", "3h","4h","5h", "6h", "7h","8h","10h","12h", "14h", "16h", "18h", "20h", "22h", "24h", "48h"]
 
-    # Compute the median time interval between samples
+    # Median sample interval
     freq = df.index.to_series().diff().median()
 
-    # Convert each window size string to (points, string) tuples, filter for
-    # sizes that are not too small/large for the dataset
-    window_sizes_pts = [
-        (int(pd.Timedelta(ws) / freq), ws)
-        for ws in window_sizes
-        if (
-            pd.Timedelta(ws) >= freq and
-            int(pd.Timedelta(ws) / freq) >= 10 and
-            int(pd.Timedelta(ws) / freq) < len(df) // 4
-        )
-    ]
+    # Convert and filter window sizes
+    window_sizes_pts = []
+    for ws in window_sizes:
+        delta = pd.Timedelta(ws)
+        pts = int(delta / freq) if delta >= freq else 0
+        if 10 <= pts < len(df) // 4:
+            window_sizes_pts.append((pts, ws))
 
-    # Subsample the DataFrame if it has too many points for efficient
-    # motif discovery
+    if not window_sizes_pts:
+        raise ValueError("No valid window sizes: adjust your `window_sizes` or data length.")
+
+    # Subsample rows if too long
     if len(df) > max_points:
-        idx_sub = np.linspace(0, len(df) - 1, max_points, dtype=int)
-        df = df.iloc[idx_sub]
+        idx = np.linspace(0, len(df)-1, max_points, dtype=int)
+        df = df.iloc[idx]
 
-    # Randomly select a subset of window sizes to test if too many
+    # Limit number of window sizes
     if len(window_sizes_pts) > max_window_sizes:
-        window_sizes_pts = list(
-            np.random.choice(window_sizes_pts, max_window_sizes, replace=False)
-        )
+        window_sizes_pts = random.sample(window_sizes_pts, max_window_sizes)
 
-    def eval_window_size(values, ws_pts, ws_str):
-        """
-        Evaluates motif repetitiveness for a given window size.
-        Args:
-            values (np.ndarray): Time series data (1D array).
-            ws_pts (int): Window size in number of points.
-            ws_str (str): Window size as string (e.g., '1h').
-        Returns:
-            tuple or None: (ws_pts, ws_str, stability_score, density_score)
-                or None if not enough data for this window size.
-        """
-        # Try to extract all possible sliding window segments
+    def eval_window(values: np.ndarray, ws_pts: int, ws_str: str):
+        # Build segments
         try:
-            segments = np.lib.stride_tricks.sliding_window_view(
-                values, ws_pts
-            )
+            segs = np.lib.stride_tricks.sliding_window_view(values, ws_pts)
         except ValueError:
-            # Not enough data points for this window size
             return None
-        n_segments = segments.shape[0]
-        if n_segments < 2:
-            # Not enough segments to compare
+        n = segs.shape[0]
+        if n < 2:
             return None
-        # Normalize each segment (z-score)
-        segments = (
-            segments - segments.mean(axis=1, keepdims=True)
-        ) / (segments.std(axis=1, keepdims=True) + 1e-8)
-        # Create a FAISS index for L2 (Euclidean) distance
+        # If too many segments, random sample
+        if n > max_segments:
+            idx = np.random.choice(n, max_segments, replace=False)
+            segs = segs[idx]
+            n = max_segments
+        # Normalize
+        segs = (segs - segs.mean(axis=1, keepdims=True)) / (segs.std(axis=1, keepdims=True) + 1e-8)
+        # FAISS index
         index = faiss.IndexFlatL2(ws_pts)
-        # Add all segments to the FAISS index
-        index.add(segments.astype(np.float32))
-        # For each segment, find the two nearest neighbors (itself + closest)
-        distance_neighbours, _ = index.search(segments.astype(np.float32), 2)
-        # Distance to the nearest *other* segment (exclude itself)
-        nearest_distance = distance_neighbours[:, 1]
-        # Median nearest neighbor distance, normalized by window size
-        score_nearest_neighbour = np.median(nearest_distance) / ws_pts
-        # Density score: fraction of segments with a very close neighbor
-        threshold = score_nearest_neighbour * 1.5
-        density_score = (nearest_distance < threshold).sum() / n_segments
-        return (ws_pts, ws_str, score_nearest_neighbour, density_score)
+        segs_f = segs.astype(np.float32)
+        index.add(segs_f)
+        dists, _ = index.search(segs_f, 2)
+        nn = dists[:, 1]
+        stability = np.median(nn) / ws_pts
+        dens = (nn < stability * 1.5).sum() / n
+        return (ws_pts, ws_str, stability, dens)
 
-    # Collect all top window sizes for each numeric variable (up to 3)
-    result_nearest_neighbours = []
-    numeric_columns = [
-        c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])
-    ][:3]
-    for col in numeric_columns:
-        # Extract the time series for this variable
-        values = df[col].values
-        # Parallel evaluation of window sizes
-        results = Parallel(n_jobs=n_jobs)(
-            delayed(eval_window_size)(values, ws_pts, ws_str)
-            for ws_pts, ws_str in window_sizes_pts
+    # Evaluate per numeric column
+    results_per_col = []
+    num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])][:3]
+    for col in num_cols:
+        vals = df[col].values
+        res = Parallel(n_jobs=n_jobs)(
+            delayed(eval_window)(vals, pts, s) for pts, s in window_sizes_pts
         )
-        # Keep only successful results (not None)
-        results = [r for r in results if r is not None]
-        # Keep only the top k (lowest stability_score) for this column
-        result_nearest_neighbours.append(
-            sorted(results, key=lambda x: x[2])[:k]
-        )
+        res = [r for r in res if r is not None]
+        if not res:
+            continue
+        results_per_col.append(sorted(res, key=lambda x: x[2])[:k])
 
-    # Flatten the list of results
-    all_best_tuples = [
-        tup for sublist in result_nearest_neighbours for tup in sublist
-    ]
+    # Flatten
+    all_tups = [t for sub in results_per_col for t in sub]
+    if not all_tups:
+        raise ValueError("No window size evaluated successfully.")
 
-    # If there are multiple columns, select consensus window sizes
-    if len(result_nearest_neighbours) > 1 and all_best_tuples:
-        # Count occurrences of each window size (as string)
-        ws_str_list = [tup[1] for tup in all_best_tuples]
-        counts = Counter(ws_str_list)
-        most_common = counts.most_common()
-        # Keep all window sizes with maximal consensus
-        consensus_ws_str = [
-            ws for ws, n in most_common if n == most_common[0][1]
-        ]
-        # Among the consensus, take the one with the best (lowest) score
-        candidates = [
-            tup for tup in all_best_tuples if tup[1] in consensus_ws_str
-        ]
-        final_result = [min(candidates, key=lambda x: x[2])]
+    # Consensus if >1 column
+    if len(results_per_col) > 1:
+        counts = Counter([t[1] for t in all_tups])
+        most = counts.most_common(1)[0][1]
+        cons_ws = [ws for ws,c in counts.items() if c == most]
+        cand = [t for t in all_tups if t[1] in cons_ws]
+        best = min(cand, key=lambda x: x[2])
+        final = [best]
     else:
-        # Only one column (or empty): keep the single best
-        final_result = all_best_tuples
+        final = all_tups
 
-    print("Best consensus window size(s):", final_result)
-    return final_result
+    print("Best consensus window size(s):", final)
+    return final
 
 
 def pre_processed(

@@ -6,7 +6,7 @@ from joblib import Parallel, delayed
 import numpy as np
 import pandas as pd
 import stumpy as sp
-
+import os
 os.environ["NUMBA_NUM_THREADS"] = "8"
 
 from .motif_pattern import discover_patterns_stumpy_mixed
@@ -54,15 +54,26 @@ def matrix_profile_process(
 
     # ==== MULTIVARIATE ====
     # Compute multivariate matrix profile
-    P, I = sp.mstump(df, m=window_size, normalize=False, discords=False)
+    P, I = sp.mstump(
+        df.to_numpy().T, m=window_size, normalize=False, discords=False
+    )
     motif_distances, motif_indices, motif_subspaces, motif_mdls = sp.mmotifs(
-        df,
+        df.to_numpy().T,
         P,
         I,
-        max_motifs=3,
-        max_matches=5,
+        max_motifs=max_motifs,
+        max_matches=max_matches,
         normalize=False,
     )
+
+    # Compute discords using the reversed matrix profile
+    P_disc, _ = sp.mstump(
+        df.to_numpy().T, m=window_size, normalize=False, discords=True
+    )
+    avg_disc = np.nanmean(P_disc, axis=0)
+    top_n = max(1, int(len(avg_disc) * top_percent_discords))
+    disc_idx = np.argsort(avg_disc)[-top_n:]
+    discords_centered = disc_idx + window_size // 2
 
     # Convert STUMPY outputs to DataFrames aligned with the original index
     profile_len = df.shape[0] - window_size + 1
@@ -89,9 +100,9 @@ def matrix_profile_process(
         "motif_indices": motif_indices,
         "motif_subspaces": motif_subspaces,
         "motif_mdls": motif_mdls,
+        "discord_indices": discords_centered,
         "window_size": window_size,
     }
-
 
 
 
@@ -136,12 +147,8 @@ def matrix_profile(
     ):
         raise TypeError("df must be a pd.DataFrame or a list of pd.DataFrame")
     if isinstance(df_o, list):
-        # Cas multivarié, plusieurs DataFrames en batch
-        # On utilise joblib pour paralléliser
-        def mp_func(df):
-            return matrix_profile_process(df, window_size=window_size)
-        result = Parallel(n_jobs=n_jobs)(delayed(mp_func)(df) for df in df_o)
-        # Option : si tous tes dfs ont plusieurs colonnes, détecte et passe par mstump
+        result = []
+        [result.append(matrix_profile_process(df, window_size=window_size)) for df in df_o]
         return result
 
 

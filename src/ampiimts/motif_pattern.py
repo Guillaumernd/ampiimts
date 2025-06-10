@@ -102,7 +102,7 @@ def discover_patterns_stumpy_mixed(
     # Adjust DataFrame index so its length matches ``df``
     df_profile_with_nan.index = df.index[:len(df_profile_with_nan)]
 
-    motif_distances, motif_indices = stumpy.motifs(X, mp[:, 0], min_neighbors=0.5, max_matches=max_matches, max_motifs=max_motifs, normalize=False)
+    motif_distances, motif_indices = stumpy.motifs(X, mp[:, 0], min_neighbors=1, max_matches=max_matches, max_motifs=max_motifs, normalize=False)
     discords = exclude_discords(mp, window_size, top_percent_discords=top_percent_discords, X=X, max_nan_frac=0.1, margin=10)
 
     # Return only the discord indices along with motif information

@@ -107,9 +107,18 @@ def plot_patterns_and_discords(df, result, column='value', figsize=(12, 6)):
     motif_colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple']
     n_patterns = len(result['patterns'])
     window_size = result['window_size']
-    half = window_size // 2
 
-    fig, axs = plt.subplots(2, 1, figsize=(figsize[0], figsize[1]*1.6), gridspec_kw={'height_ratios': [2, n_patterns]})
+    height_ratios = [2] + [1] * n_patterns if n_patterns else [2]
+    fig, axs = plt.subplots(
+        n_patterns + 1,
+        1,
+        figsize=(figsize[0], figsize[1] * (1 + 0.6 * n_patterns)),
+        gridspec_kw={"height_ratios": height_ratios},
+    )
+
+    # Ensure ``axs`` is iterable
+    if not isinstance(axs, (list, np.ndarray)):
+        axs = [axs]
 
     # -- SUBPLOT 1 : Signal, motifs, discords, MP --
     ax1 = axs[0]
@@ -159,31 +168,78 @@ def plot_patterns_and_discords(df, result, column='value', figsize=(12, 6)):
     ax1.legend(handles1 + handles2, labels1 + labels2, loc='upper right')
     ax1.grid(True)
 
-    # -- SUBPLOT 2 : Les motifs alignés par pattern --
-    ax_motif = axs[1]
-    motif_len = result['patterns'][0]['aligned_motifs'].shape[1] if n_patterns else 0
-    motif_x = np.arange(motif_len)
-    legend_shown = [False] * n_patterns
-
-    for i, pattern in enumerate(result['patterns']):
+    # -- SUBPLOTS BELOW : Each pattern on its own axis --
+    for i, pattern in enumerate(result["patterns"]):
+        ax_motif = axs[i + 1]
         color = motif_colors[i % len(motif_colors)]
-        motifs = pattern['aligned_motifs']
+        motifs = pattern["aligned_motifs"]
+        motif_len = motifs.shape[1]
+        motif_x = np.arange(motif_len)
+
+        # Compute medoid of the motifs
         medoid_idx = np.argmin([
             np.sum([np.linalg.norm(motifs[j] - motifs[k]) for k in range(len(motifs))])
             for j in range(len(motifs))
         ])
-        for j, motif in enumerate(motifs):
-            ax_motif.plot(motif_x, motif, color=color, alpha=0.4, linewidth=1,
-                          label=f"{pattern['pattern_label']} motifs" if not legend_shown[i] and j == 0 else None)
-            legend_shown[i] = True
-        ax_motif.plot(motif_x, motifs[medoid_idx], color='black', linewidth=3, label=f"{pattern['pattern_label']} medoid")
 
-    ax_motif.set_title("All motifs per pattern (médoïde en noir)")
-    ax_motif.set_xlabel("Relative index in window")
-    ax_motif.set_ylabel("value")
-    ax_motif.legend()
-    ax_motif.grid(True)
+        for motif in motifs:
+            ax_motif.plot(motif_x, motif, color=color, alpha=0.4, linewidth=1)
+
+        ax_motif.plot(motif_x, motifs[medoid_idx], color="black", linewidth=3, label="medoid")
+
+        ax_motif.set_title(pattern["pattern_label"])
+        ax_motif.set_xlabel("Relative index in window")
+        ax_motif.set_ylabel("value")
+        ax_motif.legend()
+        ax_motif.grid(True)
 
     plt.tight_layout(pad=3.0)
     plt.show()
 
+
+def plot_multidim_matrix_profile(df, result, figsize=(12, 6)):
+    """Plot a heatmap of the multi-dimensional matrix profile.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Original multi-dimensional time series used for the computation.
+    result : dict
+        Output dictionary returned by :func:`matrix_profile` on a
+        multi-dimensional DataFrame.
+    figsize : tuple, default (12, 6)
+        Size of the resulting figure.
+    """
+
+    profile = result["profile"]
+    window_size = result["window_size"]
+    discords = result.get("discord_indices", [])
+    motif_indices = result.get("motif_indices", [])
+
+    plt.figure(figsize=figsize)
+    sns.heatmap(
+        profile.T,
+        cmap="viridis",
+        xticklabels=False,
+        yticklabels=df.columns,
+        cbar_kws={"label": "Matrix Profile"},
+    )
+
+    for d in discords:
+        plt.axvline(d, color="red", linestyle="--", linewidth=1)
+
+    for group in motif_indices:
+        for start in np.atleast_1d(group):
+            start = int(np.atleast_1d(start)[0])
+            plt.axvspan(
+                start,
+                start + window_size,
+                color="orange",
+                alpha=0.3,
+            )
+
+    plt.title("Multi-dimensional Matrix Profile")
+    plt.xlabel("Index")
+    plt.ylabel("Dimension")
+    plt.tight_layout()
+    plt.show()

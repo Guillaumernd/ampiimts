@@ -13,11 +13,14 @@ from .pre_processed import (
     missing_values,
     define_m_using_clustering,
 )
+
 from .plotting import (
     plot_multiple_dfs,
     plot_all_variables_multiple_dfs,
     plot_patterns_and_discords,
+    plot_multidim_matrix_profile,
 )
+
 from .matrix_profile import matrix_profile
 from .motif_pattern import discover_patterns_stumpy_mixed
 
@@ -33,6 +36,7 @@ __all__ = [
     "plot_all_variables_multiple_dfs",
     "plot_patterns_and_discords",
     "matrix_profile",
+    "plot_multidim_matrix_profile",
     "discover_patterns_stumpy_mixed",
 ]
 
