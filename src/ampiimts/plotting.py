@@ -100,10 +100,14 @@ def plot_patterns_and_discords(df, result, column='value', figsize=(12, 6)):
     lines. Below the main plot, all motifs for each pattern are aligned with the
     medoid in black.
     """
-
-    import matplotlib.pyplot as plt
-    import numpy as np
-
+    df = df.copy()
+    
+    if isinstance(df.index, pd.DatetimeIndex):
+        name = df.index.name or "timestamp"
+        df = df.reset_index().rename(columns={name: "timestamp"})
+    elif ("timestamp" in df.columns
+          and pd.api.types.is_datetime64_any_dtype(df["timestamp"])
+          ):pass
     motif_colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple']
     n_patterns = len(result['patterns'])
     window_size = result['window_size']
@@ -226,7 +230,7 @@ def plot_multidim_matrix_profile(df, result, figsize=(12, 6)):
     )
 
     for d in discords:
-        plt.axvline(d, color="red", linestyle="--", linewidth=1)
+        plt.axvline(d, color="red", linestyle="--", linewidth=0.25)
 
     for group in motif_indices:
         for start in np.atleast_1d(group):

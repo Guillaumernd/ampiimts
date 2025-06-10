@@ -279,13 +279,17 @@ def normalization(
     if not isinstance(df.index, pd.DatetimeIndex):
         df.index = pd.to_datetime(df.index, errors="coerce")
     df = df.sort_index()
-    if isinstance(window_size, str):
+    if window_size is None:
+        window_size = 50
+    elif isinstance(window_size, str):
         window_size = int(
             pd.Timedelta(window_size) / df.index.to_series().diff().median()
         )
+    elif isinstance(window_size, (int, np.integer)):
+        pass
     else:
         raise RuntimeError(
-            "Window size isn't a str (e.g. : 1D, 1h, 1S etc...)")
+            "Window size must be None, str or int")
     for col in df.columns:
         if pd.api.types.is_numeric_dtype(df[col]):
             df[col] = aswn_with_trend(
@@ -302,7 +306,7 @@ def define_m_using_clustering(
     max_points: int = 4000,
     max_window_sizes: int = 12,
     max_segments: int = 2000,
-    n_jobs: int = -1
+    n_jobs: int = -1,
 ) -> list[tuple[int, str, float, float]]:
     """
     Determines the best window sizes for motif extraction in a time series
@@ -310,35 +314,51 @@ def define_m_using_clustering(
 
     Args:
         df: DataFrame with DatetimeIndex and numeric columns.
-        k: Number of top window sizes per variable.
-        window_sizes: List of pandas offsets (e.g. ['1m','1h']).
+        k: Number of window sizes to return.
+        window_sizes: Optional list of pandas offset strings. If ``None``, a
+            range of candidate sizes is generated automatically from the data.
         max_points: Max total points to subsample for speed.
         max_window_sizes: Max distinct window sizes to test.
         max_segments: Max sliding-window segments to index per WS.
         n_jobs: Cores for parallel.
 
+    The stability and density metrics are evaluated for each numeric column and
+    aggregated to derive a consensus window size when multiple columns are
+    available. Candidate window sizes are spaced logarithmically between two
+    points and roughly a quarter of the series length.
+
     Returns:
         List of tuples: (ws_pts, ws_str, stability_score, density_score).
     """
-    # Default window sizes
-    if window_sizes is None:
-        window_sizes = [
-            "1s","15s","30s","1m","5m","10m","15m","30m",
-            "1h","2h", "3h","4h","5h", "6h", "7h","8h","10h","12h", "14h", "16h", "18h", "20h", "22h", "24h", "48h"]
-
-    # Median sample interval
+    # Estimate base sampling frequency from the median delta
     freq = df.index.to_series().diff().median()
+    if pd.isna(freq) or freq <= pd.Timedelta(0):
+        freq = pd.Timedelta(seconds=1)
 
+    # Determine candidate window sizes automatically if none provided
+    if window_sizes is None:
+        max_pts = max(len(df) // 4, 2)
+        n_candidates = min(max_window_sizes * 2, max_pts)
+        pts_candidates = np.unique(
+            np.round(
+                np.logspace(np.log10(2), np.log10(max_pts), num=n_candidates)
+            ).astype(int)
+        )
+        window_sizes = [str(p * freq) for p in pts_candidates]
     # Convert and filter window sizes
     window_sizes_pts = []
     for ws in window_sizes:
         delta = pd.Timedelta(ws)
         pts = int(delta / freq) if delta >= freq else 0
-        if 10 <= pts < len(df) // 4:
+        max_len = max(len(df) // 4, 2)
+        if 10 <= pts < max_len:
             window_sizes_pts.append((pts, ws))
 
     if not window_sizes_pts:
-        raise ValueError("No valid window sizes: adjust your `window_sizes` or data length.")
+        default_pts = max(2, len(df) // 2)
+        ws_delta = default_pts * freq
+        ws_str = pd.tseries.frequencies.to_offset(ws_delta).freqstr
+        window_sizes_pts.append((default_pts, ws_str))
 
     # Subsample rows if too long
     if len(df) > max_points:
@@ -375,34 +395,38 @@ def define_m_using_clustering(
         dens = (nn < stability * 1.5).sum() / n
         return (ws_pts, ws_str, stability, dens)
 
-    # Evaluate per numeric column
-    results_per_col = []
+    # Evaluate on all numeric columns and aggregate the metrics
     num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])][:3]
+    if not num_cols:
+        raise ValueError("No numeric columns available for clustering.")
+
+    results_by_ws = {ws: {"stability": [], "density": [], "pts": pts}
+                     for pts, ws in window_sizes_pts}
     for col in num_cols:
         vals = df[col].values
         res = Parallel(n_jobs=n_jobs)(
             delayed(eval_window)(vals, pts, s) for pts, s in window_sizes_pts
         )
-        res = [r for r in res if r is not None]
-        if not res:
-            continue
-        results_per_col.append(sorted(res, key=lambda x: x[2])[:k])
+        for r in res:
+            if r is None:
+                continue
+            pts, ws_str, stab, dens = r
+            results_by_ws[ws_str]["stability"].append(stab)
+            results_by_ws[ws_str]["density"].append(dens)
 
-    # Flatten
-    all_tups = [t for sub in results_per_col for t in sub]
-    if not all_tups:
+    aggregated = []
+    for ws_str, metrics in results_by_ws.items():
+        if not metrics["stability"]:
+            continue
+        med_stab = np.median(metrics["stability"])
+        mean_dens = np.mean(metrics["density"])
+        aggregated.append((metrics["pts"], ws_str, med_stab, mean_dens))
+
+    if not aggregated:
         raise ValueError("No window size evaluated successfully.")
 
-    # Consensus if >1 column
-    if len(results_per_col) > 1:
-        counts = Counter([t[1] for t in all_tups])
-        most = counts.most_common(1)[0][1]
-        cons_ws = [ws for ws,c in counts.items() if c == most]
-        cand = [t for t in all_tups if t[1] in cons_ws]
-        best = min(cand, key=lambda x: x[2])
-        final = [best]
-    else:
-        final = all_tups
+    aggregated.sort(key=lambda x: x[2])
+    final = aggregated[:k]
 
     print("Best consensus window size(s):", final)
     return final
