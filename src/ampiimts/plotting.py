@@ -107,7 +107,7 @@ def plot_patterns_and_discords(df, result, column='value', figsize=(12, 6)):
           and pd.api.types.is_datetime64_any_dtype(df["timestamp"])):
         pass
 
-    motif_colors = ['tab:orange', 'tab:green', 'tab:red', 'tab:purple']
+    motif_colors = ['tab:green', 'tab:purple', 'tab:blue']
     n_patterns = len(result['patterns'])
     window_size = result['window_size']
     height_ratios = [2] + [1] * n_patterns if n_patterns else [2]
@@ -143,20 +143,25 @@ def plot_patterns_and_discords(df, result, column='value', figsize=(12, 6)):
             if 0 <= start < len(df) and end <= len(df):
                 ax1.plot(df.index[start:end], df[column].iloc[start:end],
                          color=color,
-                         label=f"{pattern['pattern_label']} motif" if j == 0 else "",
+                         label=f"{pattern['pattern_label']}" if j == 0 else "",
                          linewidth=2)
                 # marqueurs début, centre, fin
-                ax1.axvline(df.index[start], color='green', linestyle='--', linewidth=2)
-                ax1.axvline(df.index[start + window_size // 2],
-                            color='purple', linestyle=':', linewidth=1)
-                ax1.axvline(df.index[end-1], color='red', linestyle='--', linewidth=1)
+                label = f"{pattern['pattern_label']}" if j == 0 else None
+                ax1.axvspan(
+                    df.index[start],
+                    df.index[end],
+                    color=color,
+                    alpha=0.3,
+                    label=label
+                )
+
 
     # Discords
     for discord in result['discord_indices']:
         if 0 <= discord < len(df):
             ax1.axvline(
                 df.index[discord], color='red', linestyle='-',
-                linewidth=2, alpha=0.3, zorder=0)
+                linewidth=0.8, alpha=0.3, zorder=0)
     ax1.set_title("Motifs (début de fenêtre), Discords, and Matrix Profile")
     h1, l1 = ax1.get_legend_handles_labels()
     h2, l2 = ax2.get_legend_handles_labels()

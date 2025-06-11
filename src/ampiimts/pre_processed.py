@@ -304,9 +304,9 @@ def define_m_using_clustering(
     k: int = 3,
     window_sizes: list[str] = None,
     max_points: int = 4000,
-    max_window_sizes: int = 100,
+    max_window_sizes: int = 50,
     max_segments: int = 2000,
-    n_jobs: int = -1,
+    n_jobs: int = 8,
 ) -> list[tuple[int, str, float, float]]:
     """
     Determines the best window sizes for motif extraction in a time series
@@ -433,9 +433,7 @@ def define_m_using_clustering(
     # Final sort or limit to top k by stability
     aggregated.sort(key=lambda x: x[2])
     final = aggregated[:k]
-    print("Best consensus window size(s):", final)
     return final
-
 
 def pre_processed(
     df: Union[pd.DataFrame, List[pd.DataFrame]],
@@ -445,7 +443,7 @@ def pre_processed(
     alpha: float = 0.65,
     window_size: str = None,
     sort_by_variables: bool = True,
-) -> pd.DataFrame:
+) -> Union[pd.DataFrame, List[pd.DataFrame]]:
     """Full preprocessing pipeline for one or several DataFrames.
 
     Parameters
@@ -474,115 +472,113 @@ def pre_processed(
     """
 
     window_size_forward = None
+    # Type check
     if not (
         isinstance(df, pd.DataFrame)
-        or (isinstance(df, list)
-            and all(isinstance(x, pd.DataFrame) for x in df))
-            ):
+        or (isinstance(df, list) and all(isinstance(x, pd.DataFrame) for x in df))
+    ):
         raise TypeError("df must be a pd.DataFrame or a list of pd.DataFrame")
 
+    # If list of DataFrames
     if isinstance(df, list):
-        dataframes = df.copy()
+        # Drop lat/lon and sync on common grid
         dataframes = [
-            df.drop(
-                [c for c in ['latitude', 'longitude']
-                 if c in df.columns], axis=1
-            )
-            for df in dataframes]
+            d.drop([c for c in ['latitude', 'longitude'] if c in d.columns], axis=1)
+            for d in df.copy()
+        ]
         dataframes = synchronize_on_common_grid(dataframes)
-        numeric_cols_lists_by_df = [sorted(
-            df.select_dtypes(
-                include=[np.number]).columns.tolist()) for df in dataframes]
-        ref_name_dataframe = numeric_cols_lists_by_df[0]
-        for idx, cols in enumerate(numeric_cols_lists_by_df[1:], 1):
-            if cols != ref_name_dataframe:
+
+        # Ensure same numeric columns
+        numeric_cols = [sorted(d.select_dtypes(include=[np.number]).columns.tolist())
+                        for d in dataframes]
+        ref_cols = numeric_cols[0]
+        for idx, cols in enumerate(numeric_cols[1:], 1):
+            if cols != ref_cols:
                 raise ValueError(
-                    f"DataFrame {idx} does not have the same numerical "
-                    "columns as DataFrame 0:\n"
-                    f"Reference: {ref_name_dataframe}\nCurrent: {cols}"
+                    f"DataFrame {idx} does not have the same numerical columns as DataFrame 0:\n"
+                    f"Reference: {ref_cols}\nCurrent: {cols}"
                 )
-                
+
+        # split per variable if requested
         if sort_by_variables:
-            # Process each variable independently
-            dataframes_by_variable = []
-            for col_name in ref_name_dataframe:
-                cols_for_this_var = []
-                for i, df_ in enumerate(dataframes):
-                    col_name_numerate = f"{col_name}_{i}"
-                    df_col = df_[[col_name]].copy().rename(
-                        columns={col_name: col_name_numerate})
-                    cols_for_this_var.append(df_col)
-                df_by_variable = pd.concat(cols_for_this_var, axis=1)
-                df_by_variable.index = dataframes[0].index
-                dataframes_by_variable.append(df_by_variable)
-            dataframes = dataframes_by_variable
+            # build per-variable DataFrames
+            dataframes_by_var = []
+            for col_name in ref_cols:
+                var_frames = []
+                for i, d in enumerate(dataframes):
+                    renamed = d[[col_name]].rename(columns={col_name: f"{col_name}_{i}"})
+                    var_frames.append(renamed)
+                df_var = pd.concat(var_frames, axis=1)
+                df_var.index = dataframes[0].index
+                dataframes_by_var.append(df_var)
+            dataframes = dataframes_by_var
 
-            dataframes_preprocessed = []
-            for df_preprocessed in dataframes:
-                if window_size is None:
-                    # Compute the window size individually for each DataFrame
-                    window_size_forward = define_m_using_clustering(df_preprocessed)
-                    window_size_forward = window_size_forward[0][1]
-                else:
-                    window_size_forward = window_size
-
-                df_preprocessed = normalization(
-                    df_preprocessed,
-                    min_std=min_std,
-                    min_valid_ratio=min_valid_ratio,
-                    alpha=alpha,
-                    window_size=window_size_forward,
-                )
-                dataframes_preprocessed.append(df_preprocessed)
-            return dataframes_preprocessed
-
-        else:
-            # sort_by_variables == False -> same window size for all DataFrames
+            # estimate or override window_size
             if window_size is None:
-                ms = []
-                df_ref = dataframes[0]
-                for _ in range(3):
-                    wins = define_m_using_clustering(df_ref)
-                    if isinstance(wins, list):
-                        ms.append(wins[0][1])
-                    else:
-                        ms.append(wins)
-                window_size_forward = Counter(ms).most_common(1)[0][0]
-                print(f"Most frequent window size after 3 runs (all dfs): {window_size_forward}")
+                wins = define_m_using_clustering(dataframes[0])
+                window_size_forward = wins[0][1]
+                print(f"[WINDOW LIST] Fenêtre retenue (variables séparées) → {window_size_forward}")
             else:
                 window_size_forward = window_size
+                print(f"[WINDOW LIST] Fenêtre utilisateur → {window_size_forward}")
 
-            dataframes_preprocessed = []
-            for df_preprocessed in dataframes:
-                df_preprocessed = normalization(
-                    df_preprocessed,
+            # normalize each var-DataFrame with same window
+            return [
+                normalization(
+                    df_v,
                     min_std=min_std,
                     min_valid_ratio=min_valid_ratio,
                     alpha=alpha,
-                    window_size=window_size_forward,
+                    window_size=window_size_forward
                 )
-                dataframes_preprocessed.append(df_preprocessed)
-            return dataframes_preprocessed
+                for df_v in dataframes
+            ]
+        else:
+            # single window for all DataFrames
+            if window_size is None:
+                wins = define_m_using_clustering(dataframes[0])
+                window_size_forward = wins[0][1]
+                print(f"[WINDOW LIST] Fenêtre retenue (all dfs) → {window_size_forward}")
+            else:
+                window_size_forward = window_size
+                print(f"[WINDOW LIST] Fenêtre utilisateur → {window_size_forward}")
+
+            return [
+                normalization(
+                    d,
+                    min_std=min_std,
+                    min_valid_ratio=min_valid_ratio,
+                    alpha=alpha,
+                    window_size=window_size_forward
+                )
+                for d in dataframes
+            ]
+
+    # Single DataFrame path
     df_preprocessed = df.copy()
-    # Step 1: Interpolate small gaps on a regular grid, leave large gaps as NaN
+    # Step 1: interpolation
     df_preprocessed = interpolate(df_preprocessed, gap_multiplier)
+
+    # Step 2: estimate or override window size
     if window_size is None:
-        window_size_forward = define_m_using_clustering(df_preprocessed)
-        window_size_str = [win[1] for win in window_size_forward]
-        print("Best window sizes (hours):", ", ".join(window_size_str))
-        window_size_forward = window_size_forward[0][1]
-    # Step 2: Apply local normalization to all numeric columns
-    # (ASWN, with trend blending if alpha>0)
+        wins = define_m_using_clustering(df_preprocessed)
+        window_size_forward = wins[0][1]
+        print(f"[WINDOW] Fenêtre retenue (meilleure) → {window_size_forward}")
+    else:
+        window_size_forward = window_size
+        print(f"[WINDOW] Fenêtre utilisateur → {window_size_forward}")
+
+    # Step 3: normalization
     df_preprocessed = normalization(
         df_preprocessed,
         min_std=min_std,
         min_valid_ratio=min_valid_ratio,
         alpha=alpha,
-        window_size=window_size_forward or window_size,
+        window_size=window_size_forward
     )
 
-    # Return the processed DataFrame
     return df_preprocessed
+
 
 
 def missing_values(
