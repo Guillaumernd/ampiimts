@@ -17,7 +17,7 @@ def matrix_profile_process(
     window_size: Optional[int] = None,
     column: str | None = None,
     max_motifs: int = 3,
-    top_percent_discords: float = 0.02,
+    discord_top_pct: float = 0.04,
     max_matches: int = 10,
 ) -> dict:
     """Return matrix profile related data for a single DataFrame."""
@@ -48,7 +48,7 @@ def matrix_profile_process(
             df,
             window_size,
             max_motifs=max_motifs,
-            top_percent_discords=top_percent_discords,
+            discord_top_pct=discord_top_pct,
             max_matches=max_matches,
         )
 
@@ -112,7 +112,7 @@ def matrix_profile(
     n_jobs: int = 4,
     column: str | None = None,
     max_motifs: int = 3,
-    top_percent_discords: float = 0.02,
+    discord_top_pct: float = 0.04,
     max_matches: int = 10,
 ) -> Union[pd.DataFrame, List[pd.DataFrame]]:
     """Compute the matrix profile for one or several DataFrames.
@@ -165,7 +165,7 @@ def matrix_profile(
         window_size=window_size,
         column=column,
         max_motifs=max_motifs,
-        top_percent_discords=top_percent_discords,
+        discord_top_pct=discord_top_pct,
         max_matches=max_matches,
     )
 

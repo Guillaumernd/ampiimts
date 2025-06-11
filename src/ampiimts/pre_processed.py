@@ -304,7 +304,7 @@ def define_m_using_clustering(
     k: int = 3,
     window_sizes: list[str] = None,
     max_points: int = 4000,
-    max_window_sizes: int = 12,
+    max_window_sizes: int = 100,
     max_segments: int = 2000,
     n_jobs: int = -1,
 ) -> list[tuple[int, str, float, float]]:
@@ -312,30 +312,14 @@ def define_m_using_clustering(
     Determines the best window sizes for motif extraction in a time series
     using clustering. Handles empty or oversized cases gracefully.
 
-    Args:
-        df: DataFrame with DatetimeIndex and numeric columns.
-        k: Number of window sizes to return.
-        window_sizes: Optional list of pandas offset strings. If ``None``, a
-            range of candidate sizes is generated automatically from the data.
-        max_points: Max total points to subsample for speed.
-        max_window_sizes: Max distinct window sizes to test.
-        max_segments: Max sliding-window segments to index per WS.
-        n_jobs: Cores for parallel.
-
-    The stability and density metrics are evaluated for each numeric column and
-    aggregated to derive a consensus window size when multiple columns are
-    available. Candidate window sizes are spaced logarithmically between two
-    points and roughly a quarter of the series length.
-
-    Returns:
-        List of tuples: (ws_pts, ws_str, stability_score, density_score).
+    Returns a list of (ws_pts, ws_str, stability_score, density_score).
     """
-    # Estimate base sampling frequency from the median delta
+    # Estimate base sampling frequency
     freq = df.index.to_series().diff().median()
     if pd.isna(freq) or freq <= pd.Timedelta(0):
         freq = pd.Timedelta(seconds=1)
 
-    # Determine candidate window sizes automatically if none provided
+    # Generate candidate window sizes
     if window_sizes is None:
         max_pts = max(len(df) // 4, 2)
         n_candidates = min(max_window_sizes * 2, max_pts)
@@ -345,7 +329,8 @@ def define_m_using_clustering(
             ).astype(int)
         )
         window_sizes = [str(p * freq) for p in pts_candidates]
-    # Convert and filter window sizes
+
+    # Convert to point counts and filter
     window_sizes_pts = []
     for ws in window_sizes:
         delta = pd.Timedelta(ws)
@@ -360,17 +345,13 @@ def define_m_using_clustering(
         ws_str = pd.tseries.frequencies.to_offset(ws_delta).freqstr
         window_sizes_pts.append((default_pts, ws_str))
 
-    # Subsample rows if too long
+    # Subsample df if too long
     if len(df) > max_points:
         idx = np.linspace(0, len(df)-1, max_points, dtype=int)
         df = df.iloc[idx]
 
-    # Limit number of window sizes
-    if len(window_sizes_pts) > max_window_sizes:
-        window_sizes_pts = random.sample(window_sizes_pts, max_window_sizes)
-
+    # Define evaluation of one window size
     def eval_window(values: np.ndarray, ws_pts: int, ws_str: str):
-        # Build segments
         try:
             segs = np.lib.stride_tricks.sliding_window_view(values, ws_pts)
         except ValueError:
@@ -378,34 +359,41 @@ def define_m_using_clustering(
         n = segs.shape[0]
         if n < 2:
             return None
-        # If too many segments, random sample
         if n > max_segments:
             idx = np.random.choice(n, max_segments, replace=False)
             segs = segs[idx]
             n = max_segments
+        # Remove windows containing NaNs
+        mask = ~np.isnan(segs).any(axis=1)
+        segs = segs[mask]
+        n = segs.shape[0]
+        if n < 2:
+            return None
         # Normalize
         segs = (segs - segs.mean(axis=1, keepdims=True)) / (segs.std(axis=1, keepdims=True) + 1e-8)
-        # FAISS index
+        # FAISS nearest neighbor distances
         index = faiss.IndexFlatL2(ws_pts)
         segs_f = segs.astype(np.float32)
         index.add(segs_f)
         dists, _ = index.search(segs_f, 2)
         nn = dists[:, 1]
         stability = np.median(nn) / ws_pts
-        dens = (nn < stability * 1.5).sum() / n
-        return (ws_pts, ws_str, stability, dens)
+        density = (nn < stability * 1.5).sum() / n
+        return (ws_pts, ws_str, stability, density)
 
-    # Evaluate on all numeric columns and aggregate the metrics
+    # Evaluate all numeric columns
     num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])][:3]
     if not num_cols:
         raise ValueError("No numeric columns available for clustering.")
 
-    results_by_ws = {ws: {"stability": [], "density": [], "pts": pts}
-                     for pts, ws in window_sizes_pts}
+    # Compute metrics for each window size
+    results_by_ws = {ws_str: {"stability": [], "density": [], "pts": pts}
+                     for pts, ws_str in window_sizes_pts}
     for col in num_cols:
         vals = df[col].values
         res = Parallel(n_jobs=n_jobs)(
-            delayed(eval_window)(vals, pts, s) for pts, s in window_sizes_pts
+            delayed(eval_window)(vals, pts, ws_str)
+            for pts, ws_str in window_sizes_pts
         )
         for r in res:
             if r is None:
@@ -414,6 +402,7 @@ def define_m_using_clustering(
             results_by_ws[ws_str]["stability"].append(stab)
             results_by_ws[ws_str]["density"].append(dens)
 
+    # Aggregate metrics
     aggregated = []
     for ws_str, metrics in results_by_ws.items():
         if not metrics["stability"]:
@@ -425,9 +414,25 @@ def define_m_using_clustering(
     if not aggregated:
         raise ValueError("No window size evaluated successfully.")
 
+    # Determine best window for inclusion
+    # Score = density / stability
+    scores = {ws_str: np.mean(m["density"]) / np.median(m["stability"])
+              for ws_str, m in results_by_ws.items() if m["stability"]}
+    best_ws = max(
+        window_sizes_pts,
+        key=lambda tpl: scores.get(tpl[1], -np.inf)
+    )
+
+    # Random sample others but always include best_ws
+    if len(window_sizes_pts) > max_window_sizes:
+        candidates = [ws for ws in window_sizes_pts if ws != best_ws]
+        sampled = random.sample(candidates, max_window_sizes - 1)
+        window_sizes_pts = sampled + [best_ws]
+        random.shuffle(window_sizes_pts)
+
+    # Final sort or limit to top k by stability
     aggregated.sort(key=lambda x: x[2])
     final = aggregated[:k]
-
     print("Best consensus window size(s):", final)
     return final
 
