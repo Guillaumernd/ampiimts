@@ -2,7 +2,6 @@
 
 from typing import List, Optional, Union
 
-from joblib import Parallel, delayed
 import numpy as np
 import pandas as pd
 import stumpy as sp
@@ -71,7 +70,7 @@ def matrix_profile_process(
         df.to_numpy().T, m=window_size, normalize=False, discords=True
     )
     avg_disc = np.nanmean(P_disc, axis=0)
-    top_n = max(1, int(len(avg_disc) * top_percent_discords))
+    top_n = max(1, int(len(avg_disc) * discord_top_pct))
     disc_idx = np.argsort(avg_disc)[-top_n:]
     discords_centered = disc_idx + window_size // 2
 
@@ -130,7 +129,7 @@ def matrix_profile(
         Column name for univariate input.
     max_motifs : int
         Maximum number of motifs to detect.
-    top_percent_discords : float
+    discord_top_pct : float
         Fraction of discords to return.
     max_matches : int
         Maximum matches per motif.
