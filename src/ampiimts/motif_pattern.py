@@ -43,17 +43,29 @@ def discover_patterns_stumpy_mixed(
     max_matches=10
 ):
     """Detect motifs and automatic-percentile discords on a univariate signal,
-    then use FAISS to find the true medoid and keep only occurrences close to it,
-    ensuring patterns do not overlap and earlier patterns have priority."""
-    X = df['value'].values
+    puis utilise FAISS pour déterminer le véritable médian, sans se soucier du nom de la colonne."""
+
+    # --- Récupérer la colonne des valeurs, quel que soit son nom ---
+    if df.shape[1] != 1:
+        raise ValueError("Le DataFrame doit contenir exactement une colonne.")
+    # On prend la première et unique colonne
+    X = df.iloc[:, 0].values
+
+    # Calcul du matrix profile
     mp = stumpy.stump(X, window_size, normalize=False)
 
-    # Prepare matrix profile for return
+    # Préparation du DataFrame de profile pour retour
     profile_len = len(df) - window_size
     center_indices = np.arange(profile_len) + window_size // 2
-    df_profile = pd.DataFrame(mp, columns=['value','index_1','index_2','index_3'])
-    df_profile = df_profile.iloc[:len(center_indices)]
+
+    # On crée un DataFrame dédié pour le matrix_profile
+    df_profile = pd.DataFrame(
+        mp,
+        columns=['value', 'index_1', 'index_2', 'index_3']
+    ).iloc[:profile_len]
     df_profile.index = df.index[center_indices]
+
+    # On pad avec des NaN pour aligner sur la longueur d'origine
     nan_pad = np.full(window_size // 2, np.nan)
     df_profile_with_nan = pd.DataFrame(
         np.concatenate([nan_pad, df_profile['value'].values, nan_pad]),
@@ -61,10 +73,10 @@ def discover_patterns_stumpy_mixed(
     )
     df_profile_with_nan.index = df.index[:len(df_profile_with_nan)]
 
-    # 1) Strict cutoff on top 0.5% best MP values
+    # 1) Cutoff strict sur les 0.5% meilleurs MP values
     motif_cutoff = np.nanquantile(mp[:, 0], 0.005)
 
-    # Extract raw motifs with STUMPY
+    # Extraction des motifs bruts avec STUMPY
     motif_distances, motif_indices = stumpy.motifs(
         T=X,
         P=mp[:, 0],
@@ -75,26 +87,26 @@ def discover_patterns_stumpy_mixed(
         normalize=False
     )
 
-    # Identify discords
+    # Identification des discords
     discords = exclude_discords(
         mp, window_size, discord_top_pct=discord_top_pct,
         X=X, max_nan_frac=0.1, margin=10
     )
 
     results = []
-    occupied = []  # list of (start, end) intervals
+    occupied = []
 
     for i, group in enumerate(motif_indices):
-        # 1) True start indices from STUMPY
+        # 1) Indices de départ fournis par STUMPY
         starts = [int(np.atleast_1d(idx)[0]) for idx in group]
 
-        # 2) Remove those overlapping any discord
+        # 2) Exclusion des chevauchements avec les discords
         starts = [
             s for s in starts
             if not np.any((discords >= s) & (discords < s + window_size))
         ]
 
-        # 3) Gather full, non-NaN segments
+        # 3) Filtrer les segments complets (sans NaN)
         segments = []
         valid_starts = []
         for s in starts:
@@ -105,19 +117,19 @@ def discover_patterns_stumpy_mixed(
         if len(segments) < 2:
             continue
 
-        # 4) Build FAISS index to compute medoid
-        segs_arr = np.stack(segments)  # (n_segs, window_size)
+        # 4) Construction de l'index FAISS
+        segs_arr = np.stack(segments)
         index = faiss.IndexFlatL2(window_size)
         index.add(segs_arr)
 
-        # 5) Pairwise distances via FAISS
+        # 5) Distances pair-à-pair pour trouver le médian
         D, _ = index.search(segs_arr, len(segments))
         sum_dists = D.sum(axis=1)
         med_loc = int(np.argmin(sum_dists))
         medoid_start = valid_starts[med_loc]
         medoid_seg = X[medoid_start : medoid_start + window_size]
 
-        # 6) Find all matches of the medoid via STUMPY.MATCH
+        # 6) Recherche de toutes les occurrences du médian
         matches = stumpy.match(
             Q=medoid_seg,
             T=X,
@@ -127,17 +139,16 @@ def discover_patterns_stumpy_mixed(
         )
         motif_starts = [int(idx) for _, idx in matches]
 
-        # 7) Exclude matches overlapping any discord
+        # 7) Exclusion des matches chevauchant un discord
         motif_starts = [
             s for s in motif_starts
             if not np.any((discords >= s) & (discords < s + window_size))
         ]
 
-        # 8) Exclude inter-pattern overlaps, prioritizing earlier patterns
+        # 8) Exclusion des chevauchements inter-patterns
         filtered = []
         for s in sorted(motif_starts):
             interval = (s, s + window_size)
-            # keep if no overlap with occupied intervals
             if not any(max(s, os) < min(s + window_size, oe) for os, oe in occupied):
                 filtered.append(s)
                 occupied.append(interval)

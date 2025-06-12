@@ -303,7 +303,7 @@ def define_m_using_clustering(
     df: pd.DataFrame,
     k: int = 3,
     window_sizes: list[str] = None,
-    max_points: int = 4000,
+    max_points: int = 5000,
     max_window_sizes: int = 50,
     max_segments: int = 2000,
     n_jobs: int = 8,
