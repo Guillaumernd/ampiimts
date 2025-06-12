@@ -12,7 +12,8 @@ import random
 
 def synchronize_on_common_grid(
     dfs: List[pd.DataFrame],
-    gap_multiplier: float = 15
+    gap_multiplier: float = 15,
+    sort_by_variables: bool = True,
 ) -> List[pd.DataFrame]:
     """
     Synchronize multiple time series DataFrames on a common regular time grid.
@@ -64,6 +65,10 @@ def synchronize_on_common_grid(
         (dfs, interpolate_func=my_interpolate)
     >>> # Now, synced[0].index == synced[1].index == ... for all dataframes
     """
+    dfs = [
+            d.drop([c for c in ['latitude', 'longitude'] if c in d.columns], axis=1)
+            for d in dfs.copy()
+        ]
     # Independent interpolation
     dfs = [interpolate(df, gap_multiplier=gap_multiplier) for df in dfs]
     # Sampling frequency for each DataFrame
@@ -89,6 +94,30 @@ def synchronize_on_common_grid(
                 method="time", limit_direction="both")
         for df in dfs
     ]
+    
+    # Ensure same numeric columns
+    numeric_cols = [sorted(d.select_dtypes(include=[np.number]).columns.tolist())
+                    for d in dfs_synced]
+    ref_cols = numeric_cols[0]
+    for idx, cols in enumerate(numeric_cols[1:], 1):
+        if cols != ref_cols:
+            raise ValueError(
+                f"DataFrame {idx} does not have the same numerical columns as DataFrame 0:\n"
+                f"Reference: {ref_cols}\nCurrent: {cols}"
+            )
+    # split per variable if requested
+    if sort_by_variables:
+        # build per-variable DataFrames
+        dataframes_by_var = []
+        for col_name in ref_cols:
+            var_frames = []
+            for i, d in enumerate(dfs_synced):
+                renamed = d[[col_name]].rename(columns={col_name: f"{col_name}_{i}"})
+                var_frames.append(renamed)
+            df_var = pd.concat(var_frames, axis=1)
+            df_var.index = dfs_synced[0].index
+            dataframes_by_var.append(df_var)
+        dfs_synced = dataframes_by_var
     return dfs_synced
 
 
@@ -482,77 +511,27 @@ def pre_processed(
     # If list of DataFrames
     if isinstance(df, list):
         # Drop lat/lon and sync on common grid
-        dataframes = [
-            d.drop([c for c in ['latitude', 'longitude'] if c in d.columns], axis=1)
-            for d in df.copy()
-        ]
-        dataframes = synchronize_on_common_grid(dataframes)
+        dataframes = synchronize_on_common_grid(df, sort_by_variables=sort_by_variables)
 
-        # Ensure same numeric columns
-        numeric_cols = [sorted(d.select_dtypes(include=[np.number]).columns.tolist())
-                        for d in dataframes]
-        ref_cols = numeric_cols[0]
-        for idx, cols in enumerate(numeric_cols[1:], 1):
-            if cols != ref_cols:
-                raise ValueError(
-                    f"DataFrame {idx} does not have the same numerical columns as DataFrame 0:\n"
-                    f"Reference: {ref_cols}\nCurrent: {cols}"
-                )
-
-        # split per variable if requested
-        if sort_by_variables:
-            # build per-variable DataFrames
-            dataframes_by_var = []
-            for col_name in ref_cols:
-                var_frames = []
-                for i, d in enumerate(dataframes):
-                    renamed = d[[col_name]].rename(columns={col_name: f"{col_name}_{i}"})
-                    var_frames.append(renamed)
-                df_var = pd.concat(var_frames, axis=1)
-                df_var.index = dataframes[0].index
-                dataframes_by_var.append(df_var)
-            dataframes = dataframes_by_var
-
-            # estimate or override window_size
-            if window_size is None:
-                wins = define_m_using_clustering(dataframes[0])
-                window_size_forward = wins[0][1]
-                print(f"[WINDOW LIST] Fenêtre retenue (variables séparées) → {window_size_forward}")
-            else:
-                window_size_forward = window_size
-                print(f"[WINDOW LIST] Fenêtre utilisateur → {window_size_forward}")
-
-            # normalize each var-DataFrame with same window
-            return [
-                normalization(
-                    df_v,
-                    min_std=min_std,
-                    min_valid_ratio=min_valid_ratio,
-                    alpha=alpha,
-                    window_size=window_size_forward
-                )
-                for df_v in dataframes
-            ]
+        # estimate or override window_size
+        if window_size is None:
+            wins = define_m_using_clustering(dataframes[0])
+            window_size_forward = wins[0][1]
+            print(f"[WINDOW LIST] Fenêtre retenue (variables séparées) → {window_size_forward}")
         else:
-            # single window for all DataFrames
-            if window_size is None:
-                wins = define_m_using_clustering(dataframes[0])
-                window_size_forward = wins[0][1]
-                print(f"[WINDOW LIST] Fenêtre retenue (all dfs) → {window_size_forward}")
-            else:
-                window_size_forward = window_size
-                print(f"[WINDOW LIST] Fenêtre utilisateur → {window_size_forward}")
+            window_size_forward = window_size
+            print(f"[WINDOW LIST] Fenêtre utilisateur → {window_size_forward}")
 
-            return [
-                normalization(
-                    d,
-                    min_std=min_std,
-                    min_valid_ratio=min_valid_ratio,
-                    alpha=alpha,
-                    window_size=window_size_forward
-                )
-                for d in dataframes
-            ]
+        return [
+            normalization(
+                df_v,
+                min_std=min_std,
+                min_valid_ratio=min_valid_ratio,
+                alpha=alpha,
+                window_size=window_size_forward
+            )
+            for df_v in dataframes
+        ]
 
     # Single DataFrame path
     df_preprocessed = df.copy()
@@ -578,80 +557,3 @@ def pre_processed(
     )
 
     return df_preprocessed
-
-
-
-def missing_values(
-        df: pd.DataFrame, percent_missing: float = 0.2, random_state: int = 1
-) -> pd.DataFrame:
-    """
-    Simulate random missing data in all columns, including timestamp, in a
-    vectorized way.
-
-    Detects or creates a 'timestamp' column from the index or any datetime
-    column.
-    Applies a single boolean mask to assign NaN/NaT simultaneously across all
-    columns.
-    Sets 'timestamp' as the DataFrame index (as a DatetimeIndex), removing
-    duplicate columns.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Input DataFrame; index may be DatetimeIndex or default.
-    percent_missing : float, optional
-        Fraction of rows to mark as missing (0 < percent_missing < 1). Default
-        is 0.4.
-    random_state : int, optional
-        Seed for reproducibility. Default is 1.
-
-    Returns
-    -------
-    pd.DataFrame
-        Copy of input with missing values inserted, indexed by timestamp.
-    """
-    # 1. Input checks
-    if not 0 < percent_missing < 1:
-        raise ValueError("percent_missing must be between 0 and 1.")
-
-    df_copy = df.copy()
-
-    # 2. Ensure a 'timestamp' column of datetime type exists
-    if isinstance(df_copy.index, pd.DatetimeIndex):
-        name = df_copy.index.name or "timestamp"
-        df_copy = df_copy.reset_index().rename(columns={name: "timestamp"})
-    elif ("timestamp" in df_copy.columns
-          and pd.api.types.is_datetime64_any_dtype(df_copy["timestamp"])
-          ):
-        pass
-    else:
-        dt_cols = [
-            c
-            for c in df_copy.columns
-            if pd.api.types.is_datetime64_any_dtype(df_copy[c])
-        ]
-        if dt_cols:
-            df_copy = df_copy.rename(columns={dt_cols[0]: "timestamp"})
-        else:
-            df_copy = df_copy.reset_index().rename(
-                columns={"index": "timestamp"})
-
-    # 3. Convert index to datetime (for safety)
-    df_copy.index = pd.to_datetime(df_copy.index, errors="coerce")
-
-    # 4. Prepare random mask for missingness
-    rng = np.random.default_rng(random_state)
-    mask = rng.random(df_copy.shape) < percent_missing
-
-    # 5. Apply mask: pandas will choose NaN or NaT depending on dtype
-    df_missing = df_copy.mask(mask)
-
-    # 6. Remove duplicate columns, keeping the last 'timestamp'
-    df_missing = df_missing.loc[:, ~df_missing.columns.duplicated(keep="last")]
-
-    # 7. Set 'timestamp' as index and convert to DatetimeIndex
-    df_missing = df_missing.set_index("timestamp")
-    df_missing.index = pd.to_datetime(df_missing.index, errors="coerce")
-
-    return df_missing
-

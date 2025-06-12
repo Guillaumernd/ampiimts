@@ -10,8 +10,8 @@ from .pre_processed import (
     aswn_with_trend,
     normalization,
     pre_processed,
-    missing_values,
     define_m_using_clustering,
+    synchronize_on_common_grid,
 )
 
 from .plotting import (
@@ -19,6 +19,7 @@ from .plotting import (
     plot_all_variables_multiple_dfs,
     plot_patterns_and_discords,
     plot_multidim_matrix_profile,
+    plot_multidim_patterns_and_discords
 )
 
 from .matrix_profile import matrix_profile
@@ -29,17 +30,18 @@ from .motif_pattern import (
 
 __all__ = [
     "interpolate",
+    "synchronize_on_common_grid",
     "_compute_aswn",
     "aswn_with_trend",
     "normalization",
     "pre_processed",
-    "missing_values",
     "define_m_using_clustering",
     "plot_multiple_dfs",
     "plot_all_variables_multiple_dfs",
     "plot_patterns_and_discords",
     "matrix_profile",
     "plot_multidim_matrix_profile",
+    "plot_multidim_patterns_and_discords",
     "discover_patterns_stumpy_mixed",
     "discover_patterns_mstump_mixed",
 ]

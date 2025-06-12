@@ -169,6 +169,11 @@ def discover_patterns_stumpy_mixed(
     }
 
 
+import numpy as np
+import pandas as pd
+import stumpy
+import faiss
+
 def discover_patterns_mstump_mixed(
     df: pd.DataFrame,
     window_size: int,
@@ -176,79 +181,116 @@ def discover_patterns_mstump_mixed(
     discord_top_pct: float = 0.04,
     max_matches: int = 10,
 ):
-    """Discover motifs and discords in a multi-dimensional DataFrame."""
+    """
+    1. Calcul de mstump sur X multi-dim : P, I
+    2. Extraction de motifs par mmotifs (sous-espaces optimaux MDL)
+    3. On ne garde QUE ceux dont motif_subspace == [True]*d
+    4. Pour chacun on fait faiss → medoid → match → filtres discord + chevauchement
+    5. Retourne aussi le matrix_profile (P) sous forme de DataFrame
+    """
 
-    if df.shape[1] < 2:
-        raise ValueError("df must contain at least two columns")
+    # 0) Prépa
+    X = df.to_numpy(dtype=float).T  # d × n
+    d, n = X.shape
+    if d < 2:
+        raise ValueError("Il faut au moins 2 dimensions.")
 
-    X = df.to_numpy(dtype=float).T
-
+    # 1) MSTUMP
     P, I = stumpy.mstump(X, m=window_size, normalize=False, discords=False)
+    # Construction du DataFrame matrix_profile
+    center = np.arange(n - window_size + 1) + window_size // 2
+    idx = df.index[center]
+    mp_df = pd.DataFrame(
+        data=P.T,
+        index=idx,
+        columns=[f"mp_dim_{col}" for col in df.columns]
+    )
+
+    # 2) MMOTIFS
     motif_distances, motif_indices, motif_subspaces, motif_mdls = stumpy.mmotifs(
-        X,
-        P,
-        I,
+        X, P, I,
         max_motifs=max_motifs,
         max_matches=max_matches,
         normalize=False,
     )
 
+    # 3) Discords multivariés
     P_disc, _ = stumpy.mstump(X, m=window_size, normalize=False, discords=True)
     avg_disc = np.nanmean(P_disc, axis=0)
     top_n = max(1, int(len(avg_disc) * discord_top_pct))
-    disc_idx = np.argsort(avg_disc)[-top_n:]
-    discords_centered = disc_idx + window_size // 2
+    disc_idxs = np.argsort(avg_disc)[-top_n:] + window_size // 2
+    discords = sorted(disc_idxs.tolist())
 
-    profile_len = df.shape[0] - window_size + 1
-    center_indices = np.arange(profile_len) + window_size // 2
-    center_indices = center_indices[center_indices < len(df)]
+    # 4) Filtrage des motifs full-alignés
+    full_subspace = np.array([True] * d)
+    aligned_patterns = []
+    occupied = []
 
-    df_profile = pd.DataFrame(
-        P.T,
-        columns=[f"value_{col}" for col in df.columns],
-        index=df.index[center_indices],
-    )
+    for motif_id, subspace in enumerate(motif_subspaces):
+        if not np.array_equal(subspace, full_subspace):
+            continue
 
-    df_index = pd.DataFrame(
-        I.T,
-        columns=[f"index_{col}" for col in df.columns],
-        index=df.index[center_indices],
-    )
+        # collecte des starts
+        candidate_starts = set()
+        for match in motif_indices[motif_id]:
+            for idx_ in np.atleast_1d(match):
+                candidate_starts.add(int(idx_))
+        starts = sorted(candidate_starts)
 
-    pattern_infos = []
-    for i, group in enumerate(motif_indices):
-        starts = [int(np.atleast_1d(idx)[0]) for idx in group]
-        segments = []
-        valid_starts = []
+        # 4.1) exclure les débuts trop près d'un discord
+        starts = [s for s in starts
+                  if all(abs(s - d0) >= window_size for d0 in discords)]
+
+        # 4.2) garder segments valides
+        segments, valids = [], []
         for s in starts:
-            seg = df.iloc[s : s + window_size].to_numpy(dtype="float32")
-            if len(seg) == window_size and not np.isnan(seg).any():
-                segments.append(seg.ravel())
-                valid_starts.append(s)
+            if s + window_size <= n:
+                seg = X[:, s : s + window_size]
+                if not np.isnan(seg).any():
+                    segments.append(seg.ravel().astype('float32'))
+                    valids.append(s)
         if len(segments) < 2:
             continue
+
+        # 4.3) FAISS → medoid
         segs_arr = np.stack(segments)
         index = faiss.IndexFlatL2(segs_arr.shape[1])
         index.add(segs_arr)
-        D, _ = index.search(segs_arr, len(segments))
+        D, _ = index.search(segs_arr, len(valids))
         med_loc = int(np.argmin(D.sum(axis=1)))
-        medoid_start = valid_starts[med_loc]
-        pattern_infos.append(
-            {
-                "pattern_label": f"motif_{i+1}",
-                "medoid_idx": medoid_start,
-                "motif_indices_debut": valid_starts,
-            }
+        medoid_start = valids[med_loc]
+        medoid_seg = X[:, medoid_start : medoid_start + window_size].ravel()
+
+        # 4.4) stumpy.match sur le flatten multi-dim
+        T_flat = X.reshape(-1)
+        Q_flat = medoid_seg
+        matches = stumpy.match(
+            Q=Q_flat, T=T_flat,
+            max_distance=None, max_matches=None, normalize=False
         )
+        motif_starts = [int(idx_) // d for _, idx_ in matches]
+
+        # 4.5) filtrage final (discords + chevauchement inter-motifs)
+        valid_motif_starts = []
+        for s in sorted(motif_starts):
+            if any(abs(s - d0) < window_size for d0 in discords):
+                continue
+            span = (s, s + window_size)
+            if any(max(s, o[0]) < min(span[1], o[1]) for o in occupied):
+                continue
+            valid_motif_starts.append(s)
+            occupied.append(span)
+
+        if valid_motif_starts:
+            aligned_patterns.append({
+                "pattern_label": f"mmotif_{motif_id+1}",
+                "medoid_idx": medoid_start,
+                "motif_indices_debut": valid_motif_starts
+            })
 
     return {
-        "profile": df_profile,
-        "profile_index": df_index,
-        "motif_distances": motif_distances,
-        "motif_indices": motif_indices,
-        "motif_subspaces": motif_subspaces,
-        "motif_mdls": motif_mdls,
-        "patterns": pattern_infos,
-        "discord_indices": discords_centered,
+        "patterns": aligned_patterns,
+        "discord_indices": discords,
         "window_size": window_size,
+        "matrix_profile": mp_df
     }
