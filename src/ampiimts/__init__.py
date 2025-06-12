@@ -22,7 +22,10 @@ from .plotting import (
 )
 
 from .matrix_profile import matrix_profile
-from .motif_pattern import discover_patterns_stumpy_mixed
+from .motif_pattern import (
+    discover_patterns_stumpy_mixed,
+    discover_patterns_mstump_mixed,
+)
 
 __all__ = [
     "interpolate",
@@ -38,5 +41,5 @@ __all__ = [
     "matrix_profile",
     "plot_multidim_matrix_profile",
     "discover_patterns_stumpy_mixed",
+    "discover_patterns_mstump_mixed",
 ]
-

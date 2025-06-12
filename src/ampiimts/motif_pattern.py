@@ -167,3 +167,88 @@ def discover_patterns_stumpy_mixed(
         'discord_indices': discords,
         'window_size': window_size
     }
+
+
+def discover_patterns_mstump_mixed(
+    df: pd.DataFrame,
+    window_size: int,
+    max_motifs: int = 3,
+    discord_top_pct: float = 0.04,
+    max_matches: int = 10,
+):
+    """Discover motifs and discords in a multi-dimensional DataFrame."""
+
+    if df.shape[1] < 2:
+        raise ValueError("df must contain at least two columns")
+
+    X = df.to_numpy(dtype=float).T
+
+    P, I = stumpy.mstump(X, m=window_size, normalize=False, discords=False)
+    motif_distances, motif_indices, motif_subspaces, motif_mdls = stumpy.mmotifs(
+        X,
+        P,
+        I,
+        max_motifs=max_motifs,
+        max_matches=max_matches,
+        normalize=False,
+    )
+
+    P_disc, _ = stumpy.mstump(X, m=window_size, normalize=False, discords=True)
+    avg_disc = np.nanmean(P_disc, axis=0)
+    top_n = max(1, int(len(avg_disc) * discord_top_pct))
+    disc_idx = np.argsort(avg_disc)[-top_n:]
+    discords_centered = disc_idx + window_size // 2
+
+    profile_len = df.shape[0] - window_size + 1
+    center_indices = np.arange(profile_len) + window_size // 2
+    center_indices = center_indices[center_indices < len(df)]
+
+    df_profile = pd.DataFrame(
+        P.T,
+        columns=[f"value_{col}" for col in df.columns],
+        index=df.index[center_indices],
+    )
+
+    df_index = pd.DataFrame(
+        I.T,
+        columns=[f"index_{col}" for col in df.columns],
+        index=df.index[center_indices],
+    )
+
+    pattern_infos = []
+    for i, group in enumerate(motif_indices):
+        starts = [int(np.atleast_1d(idx)[0]) for idx in group]
+        segments = []
+        valid_starts = []
+        for s in starts:
+            seg = df.iloc[s : s + window_size].to_numpy(dtype="float32")
+            if len(seg) == window_size and not np.isnan(seg).any():
+                segments.append(seg.ravel())
+                valid_starts.append(s)
+        if len(segments) < 2:
+            continue
+        segs_arr = np.stack(segments)
+        index = faiss.IndexFlatL2(segs_arr.shape[1])
+        index.add(segs_arr)
+        D, _ = index.search(segs_arr, len(segments))
+        med_loc = int(np.argmin(D.sum(axis=1)))
+        medoid_start = valid_starts[med_loc]
+        pattern_infos.append(
+            {
+                "pattern_label": f"motif_{i+1}",
+                "medoid_idx": medoid_start,
+                "motif_indices_debut": valid_starts,
+            }
+        )
+
+    return {
+        "profile": df_profile,
+        "profile_index": df_index,
+        "motif_distances": motif_distances,
+        "motif_indices": motif_indices,
+        "motif_subspaces": motif_subspaces,
+        "motif_mdls": motif_mdls,
+        "patterns": pattern_infos,
+        "discord_indices": discords_centered,
+        "window_size": window_size,
+    }

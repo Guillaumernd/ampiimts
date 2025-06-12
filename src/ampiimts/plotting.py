@@ -194,6 +194,8 @@ def plot_patterns_and_discords(df, result, column='value', figsize=(12, 6)):
     plt.show()
 
 
+
+
 def plot_multidim_matrix_profile(df, result, figsize=(12, 6)):
     """Plot a heatmap of the multi-dimensional matrix profile.
 
@@ -212,6 +214,7 @@ def plot_multidim_matrix_profile(df, result, figsize=(12, 6)):
     window_size = result["window_size"]
     discords = result.get("discord_indices", [])
     motif_indices = result.get("motif_indices", [])
+    motif_subspaces = result.get("motif_subspaces")
 
     plt.figure(figsize=figsize)
     sns.heatmap(
@@ -226,15 +229,23 @@ def plot_multidim_matrix_profile(df, result, figsize=(12, 6)):
         plt.axvline(d, color="red", linestyle="--", linewidth=0.10, alpha=0.3, zorder=0)
 
 
-    for group in motif_indices:
+    for i, group in enumerate(motif_indices):
+        subspace = None
+        if motif_subspaces is not None and i < len(motif_subspaces):
+            subspace = np.atleast_1d(motif_subspaces[i])
+        else:
+            subspace = np.arange(profile.shape[1])
         for start in np.atleast_1d(group):
             start = int(np.atleast_1d(start)[0])
-            plt.axvspan(
-                start,
-                start + window_size,
-                color="orange",
-                alpha=0.3,
-            )
+            for dim in subspace:
+                rect = plt.Rectangle(
+                    (start, dim),
+                    window_size,
+                    1,
+                    color="orange",
+                    alpha=0.3,
+                )
+                plt.gca().add_patch(rect)
 
     plt.title("Multi-dimensional Matrix Profile")
     plt.xlabel("Index")

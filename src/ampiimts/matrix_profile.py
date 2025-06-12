@@ -8,7 +8,10 @@ import stumpy as sp
 import os
 os.environ["NUMBA_NUM_THREADS"] = "8"
 
-from .motif_pattern import discover_patterns_stumpy_mixed
+from .motif_pattern import (
+    discover_patterns_stumpy_mixed,
+    discover_patterns_mstump_mixed,
+)
 
 
 def matrix_profile_process(
@@ -52,57 +55,13 @@ def matrix_profile_process(
         )
 
     # ==== MULTIVARIATE ====
-    # Compute multivariate matrix profile
-    P, I = sp.mstump(
-        df.to_numpy().T, m=window_size, normalize=False, discords=False
-    )
-    motif_distances, motif_indices, motif_subspaces, motif_mdls = sp.mmotifs(
-        df.to_numpy().T,
-        P,
-        I,
+    return discover_patterns_mstump_mixed(
+        df,
+        window_size,
         max_motifs=max_motifs,
+        discord_top_pct=discord_top_pct,
         max_matches=max_matches,
-        normalize=False,
     )
-
-    # Compute discords using the reversed matrix profile
-    P_disc, _ = sp.mstump(
-        df.to_numpy().T, m=window_size, normalize=False, discords=True
-    )
-    avg_disc = np.nanmean(P_disc, axis=0)
-    top_n = max(1, int(len(avg_disc) * discord_top_pct))
-    disc_idx = np.argsort(avg_disc)[-top_n:]
-    discords_centered = disc_idx + window_size // 2
-
-    # Convert STUMPY outputs to DataFrames aligned with the original index
-    profile_len = df.shape[0] - window_size + 1
-    center_indices = np.arange(profile_len) + window_size // 2
-    center_indices = center_indices[center_indices < len(df)]
-
-    df_profile = pd.DataFrame(
-        P.T,
-        columns=[f"value_{col}" for col in df.columns],
-    )
-    df_profile.index = df.index[center_indices]
-
-    df_index = pd.DataFrame(
-        I.T,
-        columns=[f"index_{col}" for col in df.columns],
-    )
-    df_index.index = df.index[center_indices]
-
-    # Group all outputs in a single dictionary
-    return {
-        "profile": df_profile,
-        "profile_index": df_index,
-        "motif_distances": motif_distances,
-        "motif_indices": motif_indices,
-        "motif_subspaces": motif_subspaces,
-        "motif_mdls": motif_mdls,
-        "discord_indices": discords_centered,
-        "window_size": window_size,
-    }
-
 
 
 def matrix_profile(
