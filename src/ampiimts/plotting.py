@@ -1,6 +1,7 @@
 """Plotting utilities for time series results."""
 
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -253,7 +254,8 @@ def plot_multidim_matrix_profile(df, result, figsize=(12, 6)):
     plt.tight_layout()
     plt.show()
 
-def plot_multidim_patterns_and_discords(df, result, figsize=(12, 6), tick_step=500):
+
+def plot_multidim_patterns_and_discords(df, result, tick_step=500):
     """
     Trace les séries multi-dimensionnelles avec motifs, discords,
     et une heatmap du matrix profile correctement décalée.
@@ -280,6 +282,7 @@ def plot_multidim_patterns_and_discords(df, result, figsize=(12, 6), tick_step=5
     patterns      = result.get("patterns", [])
     
     n_dim, prof_len = mp.shape
+    figsize=(20, 1.5 * (n_dim + 1))
     n              = len(df)
     
     # 1) Construction des edges X pour la heatmap
@@ -372,9 +375,44 @@ def plot_multidim_patterns_and_discords(df, result, figsize=(12, 6), tick_step=5
     axh.tick_params(axis="x", rotation=45, labelsize="small")
     axh.set_yticks(np.arange(n_dim) + 0.5)
     axh.set_yticklabels(df.columns)
+    for tick in axh.get_yticklabels():
+        tick.set_fontsize(10)
+        tick.set_rotation(0)
     axh.set_xlabel("Date")
     axh.set_ylabel("Dimension")
     axh.set_title("Multi-dimensional Matrix Profile")
     
     plt.tight_layout()
     plt.show()
+
+def plot_motif_overlays(df, result, normalize=True):
+    """
+    Pour chaque motif détecté, affiche ses occurrences superposées par dimension.
+    """
+    window_size = result["window_size"]
+    patterns = result["patterns"]
+    n_dim = df.shape[1]
+    motif_colors = ["tab:green", "tab:purple", "tab:blue", "tab:orange", "tab:brown", "tab:pink"]
+
+    for i, pat in enumerate(patterns):
+        fig, axs = plt.subplots(n_dim, 1, figsize=(12, 2 * n_dim), sharex=True)
+        if n_dim == 1:
+            axs = [axs]
+        motif_label = pat["pattern_label"]
+        indices = pat["motif_indices_debut"]
+        c = motif_colors[i % len(motif_colors)]
+
+        for dim, col in enumerate(df.columns):
+            ax = axs[dim]
+            for idx in indices:
+                segment = df.iloc[idx:idx + window_size, dim]
+                if normalize:
+                    segment = (segment - segment.mean()) / (segment.std() + 1e-8)
+                ax.plot(np.arange(len(segment)), segment, alpha=0.6, color=c)
+            ax.set_ylabel(col)
+            ax.grid(True)
+
+        axs[-1].set_xlabel("Window index")
+        fig.suptitle(f"Overlay of Motif Occurrences — {motif_label}", fontsize=14)
+        plt.tight_layout()
+        plt.show()

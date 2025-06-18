@@ -7,10 +7,23 @@ def exclude_discords(
     mp, window_size, discord_top_pct=0.04, X=None, max_nan_frac=0.0, margin=0
 ):
     """Return centered indices of discords based on the top discord_top_pct of MP values."""
-    P = mp[:, 0].astype(float)
+    # Force extraction de la 1ère dimension si multivarié
+    if isinstance(mp, pd.DataFrame):
+        P = mp.iloc[:, 0].astype(float).values
+    elif isinstance(mp, (np.ndarray, list)):
+        mp = np.asarray(mp)
+        if mp.ndim == 2:
+            P = mp[:, 0].astype(float)
+        else:
+            P = mp.astype(float)
+    else:
+        raise ValueError("mp must be a DataFrame, Series, or ndarray")
+
     valid_idx = np.where(~np.isnan(P))[0]
     candidates = []
+
     if X is not None:
+        X = np.asarray(X, dtype=float)
         nan_indices = np.where(np.isnan(X))[0]
         for idx in valid_idx:
             start, end = idx, idx + window_size
@@ -35,7 +48,9 @@ def exclude_discords(
     top_group = sorted_cands[:n_top]
     cutoff = min(P[i] for i in top_group)
     discords = [idx for idx in candidates if P[idx] >= cutoff]
+
     return np.array(discords) + window_size // 2
+
 
 
 def discover_patterns_stumpy_mixed(
@@ -169,27 +184,21 @@ def discover_patterns_stumpy_mixed(
     }
 
 
-import numpy as np
-import pandas as pd
-import stumpy
-import faiss
-
 def discover_patterns_mstump_mixed(
     df: pd.DataFrame,
     window_size: int,
     max_motifs: int = 3,
-    discord_top_pct: float = 0.04,
+    discord_top_pct: float = 0.02,
     max_matches: int = 10,
 ):
     """
     1. Calcul de mstump sur X multi-dim : P, I
     2. Extraction de motifs par mmotifs (sous-espaces optimaux MDL)
     3. On ne garde QUE ceux dont motif_subspace == [True]*d
-    4. Pour chacun on fait faiss → medoid → match → filtres discord + chevauchement
+    4. Discords exclus via exclude_discords (pas de NaN)
     5. Retourne aussi le matrix_profile (P) sous forme de DataFrame
     """
-
-    # 0) Prépa
+    # 0) Préparation
     X = df.to_numpy(dtype=float).T  # d × n
     d, n = X.shape
     if d < 2:
@@ -197,7 +206,8 @@ def discover_patterns_mstump_mixed(
 
     # 1) MSTUMP
     P, I = stumpy.mstump(X, m=window_size, normalize=False, discords=False)
-    # Construction du DataFrame matrix_profile
+
+    # Matrix Profile DataFrame
     center = np.arange(n - window_size + 1) + window_size // 2
     idx = df.index[center]
     mp_df = pd.DataFrame(
@@ -213,66 +223,43 @@ def discover_patterns_mstump_mixed(
         max_matches=max_matches,
         normalize=False,
     )
+    print(f"🔍 mmotifs → {len(motif_indices)} motifs candidats")
 
-    # 3) Discords multivariés
+    # 3) Discords multivariés (filtrés via exclude_discords)
     P_disc, _ = stumpy.mstump(X, m=window_size, normalize=False, discords=True)
-    avg_disc = np.nanmean(P_disc, axis=0)
-    top_n = max(1, int(len(avg_disc) * discord_top_pct))
-    disc_idxs = np.argsort(avg_disc)[-top_n:] + window_size // 2
-    discords = sorted(disc_idxs.tolist())
+    disc_idxs = exclude_discords(
+        mp=P_disc,
+        window_size=window_size,
+        discord_top_pct=discord_top_pct,
+        X=X,
+        max_nan_frac=0.1,
+        margin=10
+    )
+    discords = sorted(disc_idxs)
 
-    # 4) Filtrage des motifs full-alignés
-    full_subspace = np.array([True] * d)
+    # 4) Traitement des motifs
     aligned_patterns = []
     occupied = []
 
     for motif_id, subspace in enumerate(motif_subspaces):
-        if not np.array_equal(subspace, full_subspace):
+        min_dims = max(1, int(0.40 * d))
+        if np.count_nonzero(subspace) < min_dims:
             continue
 
-        # collecte des starts
-        candidate_starts = set()
-        for match in motif_indices[motif_id]:
-            for idx_ in np.atleast_1d(match):
-                candidate_starts.add(int(idx_))
-        starts = sorted(candidate_starts)
+        motif_starts = []
+        for group in motif_indices[motif_id]:
+            for idx in np.atleast_1d(group):
+                idx = int(idx)
+                if idx + window_size <= len(df):
+                    motif_starts.append(idx)
 
-        # 4.1) exclure les débuts trop près d'un discord
-        starts = [s for s in starts
-                  if all(abs(s - d0) >= window_size for d0 in discords)]
-
-        # 4.2) garder segments valides
-        segments, valids = [], []
-        for s in starts:
-            if s + window_size <= n:
-                seg = X[:, s : s + window_size]
-                if not np.isnan(seg).any():
-                    segments.append(seg.ravel().astype('float32'))
-                    valids.append(s)
-        if len(segments) < 2:
+        if len(motif_starts) < 2:
             continue
 
-        # 4.3) FAISS → medoid
-        segs_arr = np.stack(segments)
-        index = faiss.IndexFlatL2(segs_arr.shape[1])
-        index.add(segs_arr)
-        D, _ = index.search(segs_arr, len(valids))
-        med_loc = int(np.argmin(D.sum(axis=1)))
-        medoid_start = valids[med_loc]
-        medoid_seg = X[:, medoid_start : medoid_start + window_size].ravel()
+        medoid_start = motif_starts[0]
 
-        # 4.4) stumpy.match sur le flatten multi-dim
-        T_flat = X.reshape(-1)
-        Q_flat = medoid_seg
-        matches = stumpy.match(
-            Q=Q_flat, T=T_flat,
-            max_distance=None, max_matches=None, normalize=False
-        )
-        motif_starts = [int(idx_) // d for _, idx_ in matches]
-
-        # 4.5) filtrage final (discords + chevauchement inter-motifs)
         valid_motif_starts = []
-        for s in sorted(motif_starts):
+        for s in motif_starts:
             if any(abs(s - d0) < window_size for d0 in discords):
                 continue
             span = (s, s + window_size)
@@ -283,7 +270,7 @@ def discover_patterns_mstump_mixed(
 
         if valid_motif_starts:
             aligned_patterns.append({
-                "pattern_label": f"mmotif_{motif_id+1}",
+                "pattern_label": f"mmotif_{motif_id + 1}",
                 "medoid_idx": medoid_start,
                 "motif_indices_debut": valid_motif_starts
             })

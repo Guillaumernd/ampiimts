@@ -120,25 +120,14 @@ def synchronize_on_common_grid(
         dfs_synced = dataframes_by_var
     return dfs_synced
 
-
-def interpolate(df: pd.DataFrame, gap_multiplier: float = 15) -> pd.DataFrame:
-    """
-    Interpolates a multivariate, irregular time series DataFrame onto a
-    regular time grid.
-    - Infers base frequency.
-    - Only fills small gaps (less than gap_multiplier * base frequency).
-    - Leaves large gaps as NaN.
-
-    Args:
-        df (pd.DataFrame): Input DataFrame with a DatetimeIndex.
-        gap_multiplier (float): Maximum gap (in multiples of base freq) to
-        interpolate.
-
-    Returns:
-        pd.DataFrame: DataFrame resampled on a regular grid, with only small
-        gaps interpolated.
-    """
+def interpolate(
+    df: pd.DataFrame,
+    gap_multiplier: float = 15,
+    column_thresholds: dict = None  # facultatif : {'T': 5.0, 'RH': 3.5, ...}
+) -> pd.DataFrame:
     df = df.copy()
+
+    # --- Nettoyage de l'index temporel ---
     if not isinstance(df.index, pd.DatetimeIndex):
         if "timestamp" in df.columns:
             df.index = pd.to_datetime(df["timestamp"], errors="coerce")
@@ -150,37 +139,61 @@ def interpolate(df: pd.DataFrame, gap_multiplier: float = 15) -> pd.DataFrame:
     df = df[~df.index.duplicated(keep="first")]
     df = df.sort_index()
 
-    idx = df.index.unique().sort_values()
+    # --- Estimation automatique des seuils par colonne si non fourni ---
+    def estimate_column_thresholds(data: pd.DataFrame) -> dict:
+        thresholds = {}
+        for col in data.select_dtypes(include=[np.number]).columns:
+            top_mean = data[col].nlargest(int(len(data) * 0.15)).mean()
+            bot_mean = data[col].nsmallest(int(len(data) * 0.15)).mean()
+            thresholds[col] = (top_mean - bot_mean) * 3.0
+        return thresholds
+
+    if column_thresholds is None:
+        column_thresholds = estimate_column_thresholds(df)
+
+    # --- Détection des outliers extrêmes (pics + plateaux aberrants) ---
+    outlier_timestamps = set()
+    for col in df.select_dtypes(include=[np.number]).columns:
+        series = df[col]
+        threshold = column_thresholds.get(col, np.inf)
+
+        # Marquer tous les points trop élevés ou trop bas comme outliers
+        mask = (series > threshold) | (series < -threshold)
+        outlier_timestamps.update(df.index[mask])
+
+    df_wo_outliers = df.drop(index=outlier_timestamps)
+
+    # --- Fréquence ---
+    idx = df_wo_outliers.index.unique().sort_values()
     if len(idx) < 2:
         raise ValueError("Not enough points to estimate frequency.")
+
     inferred = pd.infer_freq(idx)
     if inferred:
-        # If inferred is a single character
-        # like "T", "S", "H", add "1" in front
         if len(inferred) == 1 or (len(inferred) == 2 and inferred[0] == "W"):
             inferred = "1" + inferred
         try:
+            if inferred.isalpha():
+                inferred = "1" + inferred
             freq = pd.to_timedelta(inferred)
         except ValueError:
-            # fallback to median diff in case of weird infer_freq
             freq = idx.to_series().diff().median()
     else:
         freq = idx.to_series().diff().median()
 
     max_gap = freq * gap_multiplier
 
+    # Rééchantillonnage
     full_idx = pd.date_range(start=idx.min(), end=idx.max(), freq=freq)
     union_idx = idx.union(full_idx)
-    df_union = df.reindex(union_idx)
-    if "timestamp" in df_union.columns:
-        df_union = df_union.drop(columns=["timestamp"])
+    df_union = df_wo_outliers.reindex(union_idx)
     df_union = df_union.infer_objects(copy=False)
+
     diffs = idx.to_series().diff()
     seg_ids = (diffs > max_gap).cumsum()
     seg_index = pd.Series(seg_ids.values, index=idx)
-    seg_union = seg_index.reindex(
-        union_idx, method="ffill").fillna(0).astype(int)
-    seg_union = seg_union.infer_objects(copy=False)
+    seg_union = seg_index.reindex(union_idx, method="ffill").fillna(0).astype(int)
+
     df_interp = df_union.groupby(seg_union, group_keys=False).apply(
         lambda seg: seg.interpolate(method="time", limit_direction="both")
     )
@@ -188,18 +201,21 @@ def interpolate(df: pd.DataFrame, gap_multiplier: float = 15) -> pd.DataFrame:
     df_out = df_interp.reindex(full_idx)
     df_out.index.name = "timestamp"
 
+    # Grandes coupures = NaN
     gap_mask = pd.Series(False, index=df_out.index)
     for prev, nxt in zip(idx[:-1], idx[1:]):
         if nxt - prev > max_gap:
-            # Mark all points between ``prev`` (exclusive) and ``nxt`` (inclusive)
-            # as belonging to a gap
             in_gap = (df_out.index > prev) & (df_out.index <= nxt)
             gap_mask |= in_gap
-
-    # Insert NaN wherever a gap has been detected
     df_out.loc[gap_mask, :] = np.nan
 
+    # Réinjecter les timestamps outliers en tant que NaN
+    outlier_idx = sorted(ts for ts in outlier_timestamps if ts in df_out.index)
+    df_out.loc[outlier_idx] = np.nan
+
     return df_out
+
+
 
 
 @njit  # comment njit for coverage
