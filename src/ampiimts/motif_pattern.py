@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import stumpy
 import faiss
+from collections import Counter
 
 
 def exclude_discords_multi(mp, window_size, discord_top_pct=0.04, X=None, max_nan_frac=0.0, margin=0):
@@ -216,48 +217,99 @@ def discover_patterns_stumpy_mixed(
         'window_size': window_size
     }
 
-
 def discover_patterns_mstump_mixed(
     df: pd.DataFrame,
     window_size: int,
     max_motifs: int = 3,
     discord_top_pct: float = 0.02,
     max_matches: int = 10,
+    min_mdl_ratio: float = 0.5,
+    verbose: bool = True,
 ):
     """
     1. Calcul de mstump sur X multi-dim : P, I
-    2. Extraction de motifs par mmotifs (sous-espaces optimaux MDL)
-    3. On ne garde QUE ceux dont motif_subspace == [True]*d
-    4. Discords exclus via exclude_discords (pas de NaN)
-    5. Retourne aussi le matrix_profile (P) sous forme de DataFrame
+    2. Sélection des dimensions utiles via MDL
+    3. Extraction de motifs via mmotifs (sous-espaces MDL sur X réduit)
+    4. Exclusion des discords
+    5. Retourne les motifs alignés + discord + matrix profile centré
     """
     # 0) Préparation
-    X = df.to_numpy(dtype=float).T  # d × n
-    d, n = X.shape
+    X_full = df.to_numpy(dtype=float).T  # d × n
+    d, n = X_full.shape
     if d < 2:
         raise ValueError("Il faut au moins 2 dimensions.")
 
-    # 1) MSTUMP
+    # 1) Matrix Profile complet
+    P_full, I_full = stumpy.mstump(X_full, m=window_size, normalize=False, discords=False)
+
+    # 2) Sélection dimensions via MDL
+    motif_indices = np.argsort(P_full[0])[:min(20, P_full.shape[1])]
+    counts = Counter()
+    for idx in motif_indices:
+        subseq_idx = np.full(X_full.shape[0], idx)
+        nn_idx = np.full(X_full.shape[0], I_full[0][idx])
+        _, subspaces = stumpy.mdl(
+            T=X_full,
+            m=window_size,
+            subseq_idx=subseq_idx,
+            nn_idx=nn_idx,
+            normalize=False
+        )
+        for subspace in subspaces:
+            for dim in subspace:
+                counts[dim] += 1
+
+    if not counts:
+        raise ValueError("MDL n’a identifié aucune dimension active.")
+
+    max_count = max(counts.values())
+    threshold = max(1, int(min_mdl_ratio * max_count))
+    selected_dims = [i for i, c in counts.items() if c >= threshold]
+
+    if verbose:
+        print(f"[MDL] Dimensions retenues : {selected_dims} sur {list(range(d))}")
+
+    # Réduction des dimensions
+    X = X_full[selected_dims, :]
+    df = df.iloc[:, selected_dims]
+    d = X.shape[0]
+
+    # 3) Matrix Profile réduit (motifs + discords)
     P, I = stumpy.mstump(X, m=window_size, normalize=False, discords=False)
 
-    # Matrix Profile DataFrame
-    center = np.arange(n - window_size + 1) + window_size // 2
-    idx = df.index[center]
+    # Matrix Profile centré
+    profile_len = n - window_size + 1
+    center_idx = np.arange(profile_len) + window_size // 2
+    index_centered = df.index[center_idx]
+
     mp_df = pd.DataFrame(
         data=P.T,
-        index=idx,
+        index=index_centered,
         columns=[f"mp_dim_{col}" for col in df.columns]
     )
 
-    # 2) MMOTIFS
+    pre_pad = window_size // 2
+    post_pad = window_size - pre_pad - 1  # pour assurer m-1 au total
+
+    nan_start = np.full((pre_pad, mp_df.shape[1]), np.nan)
+    nan_end = np.full((post_pad, mp_df.shape[1]), np.nan)
+
+    mp_full = pd.DataFrame(
+        np.vstack([nan_start, mp_df.values, nan_end]),
+        index=df.index[:n],  # on retourne à la taille initiale
+        columns=mp_df.columns
+    )
+
+    # 4) MMOTIFS
     motif_distances, motif_indices, motif_subspaces, motif_mdls = stumpy.mmotifs(
         X, P, I,
         max_motifs=max_motifs,
+        min_neighbors=3,
         max_matches=max_matches,
         normalize=False,
     )
 
-    # 3) Discords multivariés (filtrés via exclude_discords)
+    # 5) Discords filtrés
     P_disc, _ = stumpy.mstump(X, m=window_size, normalize=False, discords=True)
     disc_idxs = exclude_discords_multi(
         mp=P_disc,
@@ -269,7 +321,7 @@ def discover_patterns_mstump_mixed(
     )
     discords = sorted(disc_idxs)
 
-    # 4) Traitement des motifs
+    # 6) Traitement motifs
     aligned_patterns = []
     occupied = []
 
@@ -284,6 +336,8 @@ def discover_patterns_mstump_mixed(
                 idx = int(idx)
                 if idx + window_size <= len(df):
                     motif_starts.append(idx)
+                    
+        motif_starts = [s + window_size // 2 for s in motif_starts]
 
         if len(motif_starts) < 2:
             continue
@@ -311,5 +365,5 @@ def discover_patterns_mstump_mixed(
         "patterns": aligned_patterns,
         "discord_indices": discords,
         "window_size": window_size,
-        "matrix_profile": mp_df
+        "matrix_profile": mp_full
     }

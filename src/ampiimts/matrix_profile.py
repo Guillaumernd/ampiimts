@@ -69,7 +69,7 @@ def matrix_profile(
     window_size: Optional[int] = None,
     n_jobs: int = 4,
     column: str | None = None,
-    max_motifs: int = 3,
+    max_motifs: int = 5,
     discord_top_pct: float = 0.04,
     max_matches: int = 10,
 ) -> Union[pd.DataFrame, List[pd.DataFrame]]:

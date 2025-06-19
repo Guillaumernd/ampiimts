@@ -136,6 +136,8 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
     discords     = result.get("discord_indices", [])
     patterns     = result.get("patterns", [])
     subspaces    = result.get("motif_subspaces", [None] * len(patterns))
+    original_cols = [col.replace("mp_dim_", "") for col in profile_df.columns]
+    df = df.loc[:, original_cols]  
 
     n_dim, prof_len = mp.shape
     figsize = (20, 1.5 * (n_dim + 1))
@@ -259,6 +261,10 @@ def plot_motif_overlays(df, result, normalize=True):
     """
     window_size = result["window_size"]
     patterns = result["patterns"]
+    profile_df = result["matrix_profile"]
+    original_cols = [col.replace("mp_dim_", "") for col in profile_df.columns]
+    df = df.loc[:, original_cols]
+
     n_dim = df.shape[1]
     motif_colors = ["tab:green", "tab:purple", "tab:blue", "tab:orange", "tab:brown", "tab:pink"]
 
