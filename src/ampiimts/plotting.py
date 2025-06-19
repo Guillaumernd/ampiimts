@@ -181,7 +181,7 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
             if dim not in pattern_dims[pat_id]:
                 continue  # dimension non pertinente pour ce motif
             for j, s in enumerate(pat["motif_indices_debut"]):
-                if s + window_size >= len(df):
+                if s < 0 or s + window_size >= len(df):
                     continue  # évite un dépassement d'index
                 e = s + window_size
                 ax.axvspan(
@@ -255,13 +255,15 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
     plt.tight_layout()
     plt.show()
 
-def plot_motif_overlays(df, result, normalize=True):
+def plot_motif_overlays(df, result, normalize=False):
     """
     Pour chaque motif détecté, affiche ses occurrences superposées par dimension.
     """
     window_size = result["window_size"]
     patterns = result["patterns"]
     profile_df = result["matrix_profile"]
+
+    # 1) Extraire les noms des colonnes originales à partir du matrix_profile
     original_cols = [col.replace("mp_dim_", "") for col in profile_df.columns]
     df = df.loc[:, original_cols]
 
@@ -279,6 +281,8 @@ def plot_motif_overlays(df, result, normalize=True):
         for dim, col in enumerate(df.columns):
             ax = axs[dim]
             for idx in indices:
+                if idx + window_size > len(df):
+                    continue  # Sécurité anti-dépassement
                 segment = df.iloc[idx:idx + window_size, dim]
                 if normalize:
                     segment = (segment - segment.mean()) / (segment.std() + 1e-8)

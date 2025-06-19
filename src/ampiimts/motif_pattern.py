@@ -304,7 +304,7 @@ def discover_patterns_mstump_mixed(
     motif_distances, motif_indices, motif_subspaces, motif_mdls = stumpy.mmotifs(
         X, P, I,
         max_motifs=max_motifs,
-        min_neighbors=3,
+        min_neighbors=4,
         max_matches=max_matches,
         normalize=False,
     )
@@ -336,7 +336,7 @@ def discover_patterns_mstump_mixed(
                 idx = int(idx)
                 if idx + window_size <= len(df):
                     motif_starts.append(idx)
-                    
+
         motif_starts = [s + window_size // 2 for s in motif_starts]
 
         if len(motif_starts) < 2:
@@ -354,7 +354,7 @@ def discover_patterns_mstump_mixed(
             valid_motif_starts.append(s)
             occupied.append(span)
 
-        if valid_motif_starts:
+        if len(valid_motif_starts) > 3 :
             aligned_patterns.append({
                 "pattern_label": f"mmotif_{motif_id + 1}",
                 "medoid_idx": medoid_start,
