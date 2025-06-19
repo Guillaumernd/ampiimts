@@ -15,14 +15,13 @@ from .pre_processed import (
 )
 
 from .plotting import (
-    plot_multiple_dfs,
-    plot_all_variables_multiple_dfs,
     plot_patterns_and_discords,
-    plot_multidim_matrix_profile,
-    plot_multidim_patterns_and_discords
+    plot_multidim_patterns_and_discords,
+    plot_motif_overlays,
 )
 
 from .matrix_profile import matrix_profile
+
 from .motif_pattern import (
     discover_patterns_stumpy_mixed,
     discover_patterns_mstump_mixed,
@@ -36,12 +35,10 @@ __all__ = [
     "normalization",
     "pre_processed",
     "define_m_using_clustering",
-    "plot_multiple_dfs",
-    "plot_all_variables_multiple_dfs",
     "plot_patterns_and_discords",
     "matrix_profile",
-    "plot_multidim_matrix_profile",
     "plot_multidim_patterns_and_discords",
     "discover_patterns_stumpy_mixed",
     "discover_patterns_mstump_mixed",
+    "plot_motif_overlays",
 ]

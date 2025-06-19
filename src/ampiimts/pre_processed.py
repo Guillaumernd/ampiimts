@@ -120,14 +120,58 @@ def synchronize_on_common_grid(
         dfs_synced = dataframes_by_var
     return dfs_synced
 
+
 def interpolate(
     df: pd.DataFrame,
     gap_multiplier: float = 15,
-    column_thresholds: dict = None  # facultatif : {'T': 5.0, 'RH': 3.5, ...}
+    column_thresholds: dict = None
 ) -> pd.DataFrame:
     df = df.copy()
 
-    # --- Nettoyage de l'index temporel ---
+    def remove_plateau_values_globally(df: pd.DataFrame, min_duration=5) -> pd.DataFrame:
+        df = df.copy()
+        for col in df.select_dtypes(include=[np.number]).columns:
+            s = df[col]
+            to_remove_values = set()
+            run_value = None
+            run_length = 0
+            for i in range(len(s)):
+                current = s.iat[i]
+                if pd.isna(current):
+                    run_value = None
+                    run_length = 0
+                    continue
+                if current == run_value:
+                    run_length += 1
+                else:
+                    if run_length >= min_duration:
+                        to_remove_values.add(run_value)
+                    run_value = current
+                    run_length = 1
+            if run_length >= min_duration:
+                to_remove_values.add(run_value)
+            if to_remove_values:
+                mask = s.isin(to_remove_values)
+                df.loc[mask, col] = np.nan
+        return df
+
+    # Sauvegarder les NaN d'origine
+    original_nan_mask = df.isna()
+
+    # Appliquer le nettoyage par plateaux
+    df = remove_plateau_values_globally(df)
+
+    # Identifier les NaN ajoutés par les plateaux incohérents
+    new_nan_mask = df.isna() & ~original_nan_mask
+
+    # Supprimer les colonnes avec trop de NaN après suppression des plateaux
+    min_valid_points_plateaux = int(len(df) * 0.9)
+    df = df.dropna(axis=1, thresh=min_valid_points_plateaux)
+
+    # Ne garder que les colonnes restantes dans le masque
+    new_nan_mask = new_nan_mask[df.columns]
+
+    # Nettoyage index
     if not isinstance(df.index, pd.DatetimeIndex):
         if "timestamp" in df.columns:
             df.index = pd.to_datetime(df["timestamp"], errors="coerce")
@@ -139,31 +183,33 @@ def interpolate(
     df = df[~df.index.duplicated(keep="first")]
     df = df.sort_index()
 
-    # --- Estimation automatique des seuils par colonne si non fourni ---
+    # Seuils automatiques
     def estimate_column_thresholds(data: pd.DataFrame) -> dict:
         thresholds = {}
         for col in data.select_dtypes(include=[np.number]).columns:
             top_mean = data[col].nlargest(int(len(data) * 0.15)).mean()
             bot_mean = data[col].nsmallest(int(len(data) * 0.15)).mean()
-            thresholds[col] = (top_mean - bot_mean) * 3.0
+            thresholds[col] = (top_mean - bot_mean) * 2.0
         return thresholds
 
     if column_thresholds is None:
         column_thresholds = estimate_column_thresholds(df)
 
-    # --- Détection des outliers extrêmes (pics + plateaux aberrants) ---
+    # Outliers extrêmes
     outlier_timestamps = set()
     for col in df.select_dtypes(include=[np.number]).columns:
         series = df[col]
         threshold = column_thresholds.get(col, np.inf)
-
-        # Marquer tous les points trop élevés ou trop bas comme outliers
-        mask = (series > threshold) | (series < -threshold)
+        center = series.median()
+        mask = np.abs(series - center) > threshold
         outlier_timestamps.update(df.index[mask])
 
+    # Nettoyage outliers
     df_wo_outliers = df.drop(index=outlier_timestamps)
+    min_valid_points = int(len(df_wo_outliers) * 0.9)
+    df_wo_outliers = df_wo_outliers.dropna(axis=1, thresh=min_valid_points)
 
-    # --- Fréquence ---
+    # Fréquence
     idx = df_wo_outliers.index.unique().sort_values()
     if len(idx) < 2:
         raise ValueError("Not enough points to estimate frequency.")
@@ -180,6 +226,9 @@ def interpolate(
             freq = idx.to_series().diff().median()
     else:
         freq = idx.to_series().diff().median()
+
+    if pd.isna(freq) or freq <= pd.Timedelta(seconds=0):
+        freq = pd.Timedelta(seconds=1)
 
     max_gap = freq * gap_multiplier
 
@@ -209,13 +258,19 @@ def interpolate(
             gap_mask |= in_gap
     df_out.loc[gap_mask, :] = np.nan
 
-    # Réinjecter les timestamps outliers en tant que NaN
+    # Réinjecter les NaN des outliers
     outlier_idx = sorted(ts for ts in outlier_timestamps if ts in df_out.index)
     df_out.loc[outlier_idx] = np.nan
 
+    # Réinjecter les NaN des plateaux incohérents
+    plateau_nan_locs = []
+    for col in new_nan_mask.columns:
+        plateau_nan_locs.extend(df.index[new_nan_mask[col]])
+
+    plateau_nan_locs = sorted(set(ts for ts in plateau_nan_locs if ts in df_out.index))
+    df_out.loc[plateau_nan_locs] = np.nan
+
     return df_out
-
-
 
 
 @njit  # comment njit for coverage
@@ -341,6 +396,8 @@ def normalization(
                 df[col], window_size, min_std, min_valid_ratio, alpha
             )
     df.attrs["m"] = window_size
+    df = df.loc[:, df.notna().sum() >= window_size]
+
     return df
 
 
@@ -538,6 +595,7 @@ def pre_processed(
             window_size_forward = window_size
             print(f"[WINDOW LIST] Fenêtre utilisateur → {window_size_forward}")
 
+        
         return [
             normalization(
                 df_v,

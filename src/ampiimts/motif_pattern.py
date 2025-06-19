@@ -3,21 +3,57 @@ import pandas as pd
 import stumpy
 import faiss
 
-def exclude_discords(
-    mp, window_size, discord_top_pct=0.04, X=None, max_nan_frac=0.0, margin=0
-):
-    """Return centered indices of discords based on the top discord_top_pct of MP values."""
-    # Force extraction de la 1ère dimension si multivarié
+
+def exclude_discords_multi(mp, window_size, discord_top_pct=0.04, X=None, max_nan_frac=0.0, margin=0):
+    """Return centered indices of discords for multivariate MSTUMP results."""
+    mp = np.asarray(mp)
+    P = np.nanmean(mp, axis=0) if mp.ndim == 2 else mp.astype(float)
+
+    valid_idx = np.where(~np.isnan(P))[0]
+    candidates = []
+
+    if X is not None:
+        X = np.asarray(X, dtype=float)
+        n = X.shape[1]
+
+        for idx in valid_idx:
+            start, end = idx, idx + window_size
+            if end > n:
+                continue
+            window = X[:, start:end]
+            if np.any(np.isnan(window).mean(axis=1) > max_nan_frac):
+                continue
+            if margin > 0:
+                nan_indices = np.where(np.isnan(X))[1]
+                if np.any((nan_indices >= start - margin) & (nan_indices < end + margin)):
+                    continue
+            candidates.append(idx)
+    else:
+        candidates = valid_idx.tolist()
+
+    if not candidates:
+        return np.array([], dtype=int)
+
+    n_top = max(1, int(np.ceil(discord_top_pct * len(candidates))))
+    top_group = sorted(candidates, key=lambda i: P[i], reverse=True)[:n_top]
+    cutoff = min(P[i] for i in top_group)
+    discords = [idx for idx in candidates if P[idx] >= cutoff]
+
+    return np.array(discords) + window_size // 2
+
+def exclude_discords(mp, window_size, discord_top_pct=0.04, X=None, max_nan_frac=0.0, margin=0):
+    """Return centered indices of discords for univariate STUMP results."""
     if isinstance(mp, pd.DataFrame):
-        P = mp.iloc[:, 0].astype(float).values
-    elif isinstance(mp, (np.ndarray, list)):
+        P = mp.iloc[:, 0].values.astype(float)
+    else:
         mp = np.asarray(mp)
         if mp.ndim == 2:
             P = mp[:, 0].astype(float)
         else:
             P = mp.astype(float)
-    else:
-        raise ValueError("mp must be a DataFrame, Series, or ndarray")
+
+    # Vérification que P est bien un tableau float utilisable
+    P = np.asarray(P, dtype=float)
 
     valid_idx = np.where(~np.isnan(P))[0]
     candidates = []
@@ -32,9 +68,7 @@ def exclude_discords(
             window = X[start:end]
             if np.isnan(window).mean() > max_nan_frac:
                 continue
-            if margin > 0 and np.any(
-                (nan_indices >= start - margin) & (nan_indices < end + margin)
-            ):
+            if margin > 0 and np.any((nan_indices >= start - margin) & (nan_indices < end + margin)):
                 continue
             candidates.append(idx)
     else:
@@ -44,8 +78,7 @@ def exclude_discords(
         return np.array([], dtype=int)
 
     n_top = max(1, int(np.ceil(discord_top_pct * len(candidates))))
-    sorted_cands = sorted(candidates, key=lambda i: P[i], reverse=True)
-    top_group = sorted_cands[:n_top]
+    top_group = sorted(candidates, key=lambda i: P[i], reverse=True)[:n_top]
     cutoff = min(P[i] for i in top_group)
     discords = [idx for idx in candidates if P[idx] >= cutoff]
 
@@ -223,11 +256,10 @@ def discover_patterns_mstump_mixed(
         max_matches=max_matches,
         normalize=False,
     )
-    print(f"🔍 mmotifs → {len(motif_indices)} motifs candidats")
 
     # 3) Discords multivariés (filtrés via exclude_discords)
     P_disc, _ = stumpy.mstump(X, m=window_size, normalize=False, discords=True)
-    disc_idxs = exclude_discords(
+    disc_idxs = exclude_discords_multi(
         mp=P_disc,
         window_size=window_size,
         discord_top_pct=discord_top_pct,

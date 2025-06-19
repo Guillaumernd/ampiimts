@@ -6,95 +6,6 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-
-def plot_multiple_dfs(dfs, labels=None, column='value', figsize_per_plot=(12, 4)):
-    """
-    Plot multiple pandas DataFrames on a single plot and on multiple subplots, 
-    each with a distinct main color and label.
-
-    Args:
-        dfs (list of pd.DataFrame): List of DataFrames to plot.
-        labels (list of str, optional): Labels for each DataFrame. If None, generic labels are used.
-        column (str): Column to plot from each DataFrame.
-        figsize_per_plot (tuple): Figure size per plot (width, height).
-    """
-    main_colors = [
-        'tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple',
-        'tab:brown', 'tab:pink', 'tab:gray', 'tab:olive', 'tab:cyan'
-    ]
-    n = len(dfs)
-    if labels is None:
-        labels = [f"Series {i+1}" for i in range(n)]
-    elif len(labels) != n:
-        raise ValueError("`labels` doit avoir la même longueur que `dfs`.")
-
-    # 1) All series on the same plot
-    fig, ax = plt.subplots(figsize=(figsize_per_plot[0], figsize_per_plot[1]))
-    for df_, label, color in zip(dfs, labels, main_colors):
-        df_ = df_.copy()
-        if 'timestamp' in df_.columns:
-            df_.index = pd.to_datetime(df_['timestamp'], errors='coerce')
-            df_ = df_.drop(columns=['timestamp'])
-        ax.plot(df_.index, df_[column], label=label, color=color)
-    ax.set_title("Summary")
-    ax.set_xlabel("Timestamp")
-    ax.set_ylabel(column)
-    ax.legend()
-    ax.grid(True)
-    plt.tight_layout()
-    plt.show()
-
-def plot_all_variables_multiple_dfs(dfs, labels=None, variables=None, figsize_per_plot=(12, 4)):
-    """
-    For each variable/column, plot all DataFrames on the same graph (superposed),
-    then show subplots for each DataFrame if desired.
-
-    Args:
-        dfs (list of pd.DataFrame): List of DataFrames to plot (index=timestamp).
-        labels (list of str, optional): Labels for each DataFrame.
-        variables (list of str, optional): Which columns/variables to plot. If None, uses all common columns.
-        figsize_per_plot (tuple): Figure size per plot (width, height).
-    """
-    main_colors = [
-        'tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple',
-        'tab:brown', 'tab:pink', 'tab:gray', 'tab:olive', 'tab:cyan'
-    ]
-    n = len(dfs)
-    if labels is None:
-        labels = [f"Series {i+1}" for i in range(n)]
-    elif len(labels) != n:
-        raise ValueError("`labels` doit avoir la même longueur que `dfs`.")
-
-    # Détermination des variables à tracer
-    if variables is None:
-        # Only keep columns that are present in every DataFrame and are numeric
-        cols = set(dfs[0].columns)
-        for df in dfs[1:]:
-            cols &= set(df.columns)
-        # Filter numeric columns only
-        first_df = dfs[0][list(cols)]
-        variables = [c for c in cols if pd.api.types.is_numeric_dtype(first_df[c])]
-    if not variables:
-        raise ValueError("No numeric variables/columns found in all DataFrames.")
-
-    # Un plot par variable
-    for var in variables:
-        plt.figure(figsize=figsize_per_plot)
-        for df_, label, color in zip(dfs, labels, main_colors):
-            if 'timestamp' in df_.columns:
-                df_ = df_.copy()
-                df_.index = pd.to_datetime(df_['timestamp'], errors='coerce')
-                df_ = df_.drop(columns=['timestamp'])
-            plt.plot(df_.index, df_[var], label=label, color=color)
-        plt.title(f"Comparison for variable '{var}'")
-        plt.xlabel("Timestamp")
-        plt.ylabel(var)
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-        plt.show()
-
-
 def plot_patterns_and_discords(df, result, column='value', figsize=(12, 6)):
     """Plot signal, detected motifs and discords along with the matrix profile.
 
@@ -195,193 +106,150 @@ def plot_patterns_and_discords(df, result, column='value', figsize=(12, 6)):
     plt.show()
 
 
-
-
-def plot_multidim_matrix_profile(df, result, figsize=(12, 6)):
-    """Plot a heatmap of the multi-dimensional matrix profile.
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        Original multi-dimensional time series used for the computation.
-    result : dict
-        Output dictionary returned by :func:`matrix_profile` on a
-        multi-dimensional DataFrame.
-    figsize : tuple, default (12, 6)
-        Size of the resulting figure.
-    """
-
-    profile = result["profile"]
-    window_size = result["window_size"]
-    discords = result.get("discord_indices", [])
-    motif_indices = result.get("motif_indices", [])
-    motif_subspaces = result.get("motif_subspaces")
-
-    plt.figure(figsize=figsize)
-    sns.heatmap(
-        profile.T,
-        cmap="viridis",
-        xticklabels=False,
-        yticklabels=df.columns,
-        cbar_kws={"label": "Matrix Profile"},
-    )
-
-    for d in discords:
-        plt.axvline(d, color="red", linestyle="--", linewidth=0.10, alpha=0.3, zorder=0)
-
-
-    for i, group in enumerate(motif_indices):
-        subspace = None
-        if motif_subspaces is not None and i < len(motif_subspaces):
-            subspace = np.atleast_1d(motif_subspaces[i])
-        else:
-            subspace = np.arange(profile.shape[1])
-        for start in np.atleast_1d(group):
-            start = int(np.atleast_1d(start)[0])
-            for dim in subspace:
-                rect = plt.Rectangle(
-                    (start, dim),
-                    window_size,
-                    1,
-                    color="orange",
-                    alpha=0.3,
-                )
-                plt.gca().add_patch(rect)
-
-    plt.title("Multi-dimensional Matrix Profile")
-    plt.xlabel("Index")
-    plt.ylabel("Dimension")
-    plt.tight_layout()
-    plt.show()
-
-
 def plot_multidim_patterns_and_discords(df, result, tick_step=500):
     """
-    Trace les séries multi-dimensionnelles avec motifs, discords,
-    et une heatmap du matrix profile correctement décalée.
+    Affiche :
+      • chaque dimension de la série multivariée
+      • les motifs (zones colorées seulement sur les dimensions actives)
+      • les discords (traits rouges)
+      • la heat-map du Matrix Profile
     
     Parameters
     ----------
     df : pandas.DataFrame
-        Série temporelle multi-dimensionnelle (index DatetimeIndex).
+        Time-series multivariée indexée par dates.
     result : dict
-        Issue de discover_patterns_mstump_mmotifs_aligned, contenant :
-        - "matrix_profile"  : DataFrame (len=n−m+1 × n_dim), index DatetimeIndex
-        - "window_size"     : int
-        - "discord_indices" : list d’indices centraux
-        - "patterns"        : list de dicts {"pattern_label", "motif_indices_debut", ...}
-    figsize : tuple
+        Sortie de discover_patterns_mstump_mixed :
+            - "matrix_profile"  : DataFrame (len=n−m+1 × n_dim), index DatetimeIndex
+            - "window_size"     : int
+            - "discord_indices" : list
+            - "patterns"        : list de dicts
+            - "motif_subspaces" : list[np.ndarray[bool]] (facultatif)
     tick_step : int
+        Pas pour les ticks (inutile si AutoDateLocator utilisé).
     """
-    # --- 0) Récupérations ---
-    profile_df   = result["matrix_profile"]        # shape (n-m+1) × n_dim
-    mp            = profile_df.values.T            # (n_dim, prof_len)
-    center_dates  = profile_df.index.to_pydatetime()
-    window_size   = result["window_size"]
-    discords      = result.get("discord_indices", [])
-    patterns      = result.get("patterns", [])
-    
+    # --- 0) Récupérations --------------------------------------------
+    profile_df   = result["matrix_profile"]             # (n-m+1) × n_dim
+    mp           = profile_df.values.T                  # (n_dim, prof_len)
+    center_dates = profile_df.index.to_pydatetime()
+    window_size  = result["window_size"]
+    discords     = result.get("discord_indices", [])
+    patterns     = result.get("patterns", [])
+    subspaces    = result.get("motif_subspaces", [None] * len(patterns))
+
     n_dim, prof_len = mp.shape
-    figsize=(20, 1.5 * (n_dim + 1))
-    n              = len(df)
-    
-    # 1) Construction des edges X pour la heatmap
+    figsize = (20, 1.5 * (n_dim + 1))
+
+    # --- 1) Préparation des bords X pour la heat-map ------------------
     dnums = mdates.date2num(center_dates)
     diffs = np.diff(dnums)
     xedges = np.empty(prof_len + 1)
-    xedges[1:-1] = dnums[:-1] + diffs/2
-    xedges[0]     = dnums[0]   - diffs[0]/2
-    xedges[-1]    = dnums[-1]  + diffs[-1]/2
+    xedges[1:-1] = dnums[:-1] + diffs / 2
+    xedges[0]    = dnums[0] - diffs[0] / 2
+    xedges[-1]   = dnums[-1] + diffs[-1] / 2
     yedges = np.arange(n_dim + 1)
-    
-    # 2) Création figure + axes (sharex pour aligner)
+
+    # --- 2) Création figure + axes -----------------------------------
     fig, axs = plt.subplots(
         n_dim + 1, 1,
         figsize=(figsize[0], figsize[1] * (1 + 0.2 * n_dim)),
         sharex=True,
-        gridspec_kw={"height_ratios": [1] * n_dim + [0.7]}
+        gridspec_kw={"height_ratios": [1] * n_dim + [0.7]},
     )
-    motif_colors = ["tab:green", "tab:purple", "tab:blue", "tab:orange"]
-    
-    # 3) Tracé des séries, motifs et discords
+
+    motif_colors = ["tab:green", "tab:purple", "tab:blue", "tab:orange",
+                    "tab:brown", "tab:pink", "tab:gray", "tab:olive"]
+
+    # Pré-compute : pour chaque motif, la liste des dimensions actives
+    pattern_dims = []
+    for sp in subspaces:
+        if sp is None:
+            pattern_dims.append(set(range(n_dim)))
+        else:
+            pattern_dims.append(set(np.where(np.atleast_1d(sp))[0]))
+
+    # --- 3) Tracé des séries, motifs et discords ---------------------
     for dim, col in enumerate(df.columns):
         ax = axs[dim]
-        ax.plot(df.index, df[col], color="black", label=col)
-        # motifs (alignés sur toutes les dims)
-        for i, pat in enumerate(patterns):
-            c = motif_colors[i % len(motif_colors)]
+        ax.plot(df.index, df[col], color="black", label=col, linewidth=0.8)
+
+        # motifs (axvspan uniquement si la dimension est active)
+        for pat_id, pat in enumerate(patterns):
+            c = motif_colors[pat_id % len(motif_colors)]
+            if dim not in pattern_dims[pat_id]:
+                continue  # dimension non pertinente pour ce motif
             for j, s in enumerate(pat["motif_indices_debut"]):
+                if s + window_size >= len(df):
+                    continue  # évite un dépassement d'index
                 e = s + window_size
                 ax.axvspan(
-                    df.index[s],
-                    df.index[e],
+                    df.index[s], df.index[e],
                     color=c,
-                    alpha=0.3,
-                    label=(pat["pattern_label"] if j == 0 else None),
+                    alpha=0.25,
+                    label=(pat["pattern_label"] if (j == 0 and dim == 0) else None),
                 )
-        # discords
+
+
+        # discords (traits verticaux rouges)
         for d in discords:
-            ax.axvline(
-                df.index[d],
-                color="red",
-                linestyle="--",
-                alpha=0.5,
-            )
+            ax.axvline(df.index[d], color="red", linestyle="--", alpha=0.5, linewidth=0.8)
+
         ax.set_ylabel(col)
-        ax.legend(loc="upper right", fontsize="small")
-        ax.grid(True)
-        # afficher les dates sur chaque subplot
+        ax.grid(True, linewidth=0.3, alpha=0.6)
+
+        # mise en forme de l'axe X
         ax.xaxis.set_major_locator(mdates.AutoDateLocator())
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
-        ax.tick_params(axis="x", rotation=45, labelsize="small", labelbottom=True)
-    
-    # 4) Heatmap via pcolormesh sur la plage valide
+        ax.tick_params(axis="x", rotation=45, labelsize="small")
+        ax.legend(loc="upper right", fontsize="x-small")
+
+    # --- 4) Heat-map du Matrix Profile -------------------------------
     axh = axs[-1]
     cmap = plt.cm.viridis.copy()
     cmap.set_bad("white")
-    
+
     mesh = axh.pcolormesh(
         xedges, yedges, mp,
         cmap=cmap,
-        shading="flat"
+        shading="auto",
     )
     fig.colorbar(mesh, ax=axh, label="Matrix Profile")
-    
-    # redessiner discords
+
+    # Redessiner discords sur la heat-map
     for d in discords:
         xd = mdates.date2num(df.index[d])
-        axh.axvline(xd, color="red", linestyle="--", alpha=0.5)
-    # redessiner motifs
-    for i, pat in enumerate(patterns):
-        c = motif_colors[i % len(motif_colors)]
+        axh.axvline(xd, color="red", linestyle="--", alpha=0.5, linewidth=0.8)
+
+    # Redessiner motifs (rectangles) mais uniquement sur les dims actives
+    for pat_id, pat in enumerate(patterns):
+        c = motif_colors[pat_id % len(motif_colors)]
+        active_dims = pattern_dims[pat_id]
+        if not active_dims:
+            continue
+        ymin = min(active_dims)
+        ymax = max(active_dims) + 1
         for s in pat["motif_indices_debut"]:
             x0 = mdates.date2num(df.index[s])
             x1 = mdates.date2num(df.index[s + window_size])
             rect = plt.Rectangle(
-                (x0, 0),
+                (x0, ymin),
                 x1 - x0,
-                n_dim,
+                ymax - ymin,
                 edgecolor=c,
                 facecolor="none",
-                linewidth=1.5,
-                alpha=0.7
+                linewidth=1.2,
+                alpha=0.8,
             )
             axh.add_patch(rect)
-    
-    # 5) Formatage final de l'axe X & Y de la heatmap
+
+    # --- 5) Mise en forme finale -------------------------------------
     axh.set_xlim(df.index[0], df.index[-1])
-    axh.xaxis.set_major_locator(mdates.AutoDateLocator())
-    axh.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
-    axh.tick_params(axis="x", rotation=45, labelsize="small")
-    axh.set_yticks(np.arange(n_dim) + 0.5)
-    axh.set_yticklabels(df.columns)
-    for tick in axh.get_yticklabels():
-        tick.set_fontsize(10)
-        tick.set_rotation(0)
     axh.set_xlabel("Date")
     axh.set_ylabel("Dimension")
+    axh.set_yticks(np.arange(n_dim) + 0.5)
+    axh.set_yticklabels(df.columns)
     axh.set_title("Multi-dimensional Matrix Profile")
-    
+
     plt.tight_layout()
     plt.show()
 
