@@ -223,7 +223,7 @@ def discover_patterns_mstump_mixed(
     max_motifs: int = 3,
     discord_top_pct: float = 0.02,
     max_matches: int = 10,
-    min_mdl_ratio: float = 0.5,
+    min_mdl_ratio: float = 0.25,
     verbose: bool = True,
 ):
     """
