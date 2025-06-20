@@ -186,8 +186,8 @@ def discover_patterns_stumpy_mixed(
             max_matches=None,
             normalize=False
         )
-        motif_starts = [int(idx) for _, idx in matches]
-
+        distance_threshold = 0.2 * np.linalg.norm(medoid_seg)
+        motif_starts = [int(idx) for dist, idx in matches if dist < distance_threshold]
         # 7) Exclusion des matches chevauchant un discord
         motif_starts = [
             s for s in motif_starts
@@ -355,12 +355,50 @@ def discover_patterns_mstump_mixed(
             occupied.append(span)
 
         if len(valid_motif_starts) > 3 :
+            segments = [
+                X[:, s - window_size//2 : s + window_size//2]
+                for s in valid_motif_starts]
+            segs_arr = np.stack(segments).astype('float32')
+            n, d, w = segs_arr.shape
+            segs_arr = segs_arr.reshape(n, d * w)
+
+            index = faiss.IndexFlatL2(segs_arr.shape[1])
+            index.add(segs_arr)
+            D, _ = index.search(segs_arr, n)
+
+            # 3. Identifier le segment médian
+            sum_dists = D.sum(axis=1)
+            med_loc = int(np.argmin(sum_dists))
+            medoid_start = valid_motif_starts[med_loc]
+            medoid_seg = segments[med_loc]  # matrice (d, window_size)
+            matches = stumpy.match(
+                Q=medoid_seg,
+                T=X,
+                normalize=False
+            )
+            distance_threshold = 0.135 * np.linalg.norm(medoid_seg)
+            motif_starts = [
+                int(idx) for dist, idx in matches if dist < distance_threshold]
+            # Filtrer les motifs chevauchant des discords
+            motif_starts = [
+                s for s in motif_starts
+                if not any((d >= s) and (d < s + window_size) for d in discords)
+            ]
+            filtered = []
+            for s in sorted(motif_starts):
+                span = (s, s + window_size)
+                if not any(max(s, o[0]) < min(span[1], o[1]) for o in occupied):
+                    filtered.append(s)
+                    occupied.append(span)
+
+            if not filtered:
+                continue
+
             aligned_patterns.append({
                 "pattern_label": f"mmotif_{motif_id + 1}",
                 "medoid_idx": medoid_start,
-                "motif_indices_debut": valid_motif_starts
+                "motif_indices_debut": filtered
             })
-
     return {
         "patterns": aligned_patterns,
         "discord_indices": discords,
