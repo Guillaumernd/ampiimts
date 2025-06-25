@@ -225,6 +225,7 @@ def discover_patterns_mstump_mixed(
     max_matches: int = 10,
     min_mdl_ratio: float = 0.25,
     verbose: bool = True,
+    cluster: bool = False,
 ):
     """
     1. Calcul de mstump sur X multi-dim : P, I
@@ -233,72 +234,51 @@ def discover_patterns_mstump_mixed(
     4. Exclusion des discords
     5. Retourne les motifs alignés + discord + matrix profile centré
     """
+       
     # 0) Préparation
-    X_full = df.to_numpy(dtype=float).T  # d × n
-    d, n = X_full.shape
+    X = df.to_numpy(dtype=float).T  # d × n
+    d, n = X.shape
     if d < 2:
         raise ValueError("Il faut au moins 2 dimensions.")
 
-    # 1) Matrix Profile complet
-    P_full, I_full = stumpy.mstump(X_full, m=window_size, normalize=False, discords=False)
+    if not cluster:
+        # 1) Matrix Profile complet
+        P, I = stumpy.mstump(X, m=window_size, normalize=False, discords=False)
 
-    # 2) Sélection dimensions via MDL
-    motif_indices = np.argsort(P_full[0])[:min(20, P_full.shape[1])]
-    counts = Counter()
-    for idx in motif_indices:
-        subseq_idx = np.full(X_full.shape[0], idx)
-        nn_idx = np.full(X_full.shape[0], I_full[0][idx])
-        _, subspaces = stumpy.mdl(
-            T=X_full,
-            m=window_size,
-            subseq_idx=subseq_idx,
-            nn_idx=nn_idx,
-            normalize=False
-        )
-        for subspace in subspaces:
-            for dim in subspace:
-                counts[dim] += 1
+        # 2) Sélection dimensions via MDL
+        motif_indices = np.argsort(P[0])[:min(20, P.shape[1])]
+        counts = Counter()
+        for idx in motif_indices:
+            subseq_idx = np.full(X.shape[0], idx)
+            nn_idx = np.full(X.shape[0], I[0][idx])
+            _, subspaces = stumpy.mdl(
+                T=X,
+                m=window_size,
+                subseq_idx=subseq_idx,
+                nn_idx=nn_idx,
+                normalize=False
+            )
+            for subspace in subspaces:
+                for dim in subspace:
+                    counts[dim] += 1
 
-    if not counts:
-        raise ValueError("MDL n’a identifié aucune dimension active.")
+        if not counts:
+            raise ValueError("MDL n’a identifié aucune dimension active.")
 
-    max_count = max(counts.values())
-    threshold = max(1, int(min_mdl_ratio * max_count))
-    selected_dims = [i for i, c in counts.items() if c >= threshold]
+        max_count = max(counts.values())
+        threshold = max(1, int(min_mdl_ratio * max_count))
+        selected_dims = [i for i, c in counts.items() if c >= threshold]
 
-    if verbose:
-        print(f"[MDL] Dimensions retenues : {selected_dims} sur {list(range(d))}")
+        if verbose:
+            print(f"[MDL] Dimensions retenues : {selected_dims} sur {list(range(d))}")
 
-    # Réduction des dimensions
-    X = X_full[selected_dims, :]
-    df = df.iloc[:, selected_dims]
-    d = X.shape[0]
+        # Réduction des dimensions
+        X = X[selected_dims, :]
+        df = df.iloc[:, selected_dims]
+        d = X.shape[0]
 
     # 3) Matrix Profile réduit (motifs + discords)
     P, I = stumpy.mstump(X, m=window_size, normalize=False, discords=False)
-
-    # Matrix Profile centré
-    profile_len = n - window_size + 1
-    center_idx = np.arange(profile_len) + window_size // 2
-    index_centered = df.index[center_idx]
-
-    mp_df = pd.DataFrame(
-        data=P.T,
-        index=index_centered,
-        columns=[f"mp_dim_{col}" for col in df.columns]
-    )
-
-    pre_pad = window_size // 2
-    post_pad = window_size - pre_pad - 1  # pour assurer m-1 au total
-
-    nan_start = np.full((pre_pad, mp_df.shape[1]), np.nan)
-    nan_end = np.full((post_pad, mp_df.shape[1]), np.nan)
-
-    mp_full = pd.DataFrame(
-        np.vstack([nan_start, mp_df.values, nan_end]),
-        index=df.index[:n],  # on retourne à la taille initiale
-        columns=mp_df.columns
-    )
 
     # 4) MMOTIFS
     motif_distances, motif_indices, motif_subspaces, motif_mdls = stumpy.mmotifs(
@@ -320,6 +300,30 @@ def discover_patterns_mstump_mixed(
         margin=10
     )
     discords = sorted(disc_idxs)
+
+
+    # Matrix Profile centré
+    profile_len = n - window_size + 1
+    center_idx = np.arange(profile_len) + window_size // 2
+    index_centered = df.index[center_idx]
+
+    mp_df = pd.DataFrame(
+        data=P_disc.T,
+        index=index_centered,
+        columns=[f"mp_dim_{col}" for col in df.columns]
+    )
+
+    pre_pad = window_size // 2
+    post_pad = window_size - pre_pad - 1  # pour assurer m-1 au total
+
+    nan_start = np.full((pre_pad, mp_df.shape[1]), np.nan)
+    nan_end = np.full((post_pad, mp_df.shape[1]), np.nan)
+
+    mp_full = pd.DataFrame(
+        np.vstack([nan_start, mp_df.values, nan_end]),
+        index=df.index[:n],  # on retourne à la taille initiale
+        columns=mp_df.columns
+    )
 
     # 6) Traitement motifs
     aligned_patterns = []
@@ -356,8 +360,11 @@ def discover_patterns_mstump_mixed(
 
         if len(valid_motif_starts) > 3 :
             segments = [
-                X[:, s - window_size//2 : s + window_size//2]
-                for s in valid_motif_starts]
+                X[:, s - window_size // 2 : s + window_size // 2]
+                for s in valid_motif_starts
+                if s - window_size // 2 >= 0 and s + window_size // 2 <= X.shape[1]
+            ]
+            segments = [seg for seg in segments if seg.shape[1] == window_size]
             segs_arr = np.stack(segments).astype('float32')
             n, d, w = segs_arr.shape
             segs_arr = segs_arr.reshape(n, d * w)

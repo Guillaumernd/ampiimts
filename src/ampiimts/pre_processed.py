@@ -1,6 +1,11 @@
 """Preprocessed module for panda DataFrame with timestamp column."""
 from typing import Union, List
 from collections import Counter
+from scipy.cluster.hierarchy import linkage, fcluster
+from scipy.spatial.distance import squareform
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from itertools import combinations
 from joblib import Parallel, delayed
 import warnings
 import numpy as np
@@ -120,14 +125,14 @@ def synchronize_on_common_grid(
         dfs_synced = dataframes_by_var
     return dfs_synced
 
-
 def interpolate(
-    df: pd.DataFrame,
+    df_origine: pd.DataFrame,
     gap_multiplier: float = 15,
-    column_thresholds: dict = None
+    column_thresholds: dict = None,
+    propagate_nan: bool = True,
 ) -> pd.DataFrame:
-    df = df.copy()
-
+    df = df_origine.copy()
+    
     def remove_plateau_values_globally(df: pd.DataFrame, min_duration=5) -> pd.DataFrame:
         df = df.copy()
         for col in df.select_dtypes(include=[np.number]).columns:
@@ -259,16 +264,34 @@ def interpolate(
     df_out.loc[gap_mask, :] = np.nan
 
     # Réinjecter les NaN des outliers
-    outlier_idx = sorted(ts for ts in outlier_timestamps if ts in df_out.index)
-    df_out.loc[outlier_idx] = np.nan
+    if propagate_nan:
+        outlier_idx = sorted(ts for ts in outlier_timestamps if ts in df_out.index)
+        df_out.loc[outlier_idx, :] = np.nan
+    else:
+        for col in df_out.columns:
+            original_col = col if col in df.columns else None
+            if original_col is None:
+                continue
+            series = df[original_col]
+            threshold = column_thresholds.get(original_col, np.inf)
+            center = series.median()
+            mask = np.abs(series - center) > threshold
+            ts_nan = df.index[mask]
+            ts_nan = [ts for ts in ts_nan if ts in df_out.index]
+            df_out.loc[ts_nan, col] = np.nan
 
     # Réinjecter les NaN des plateaux incohérents
-    plateau_nan_locs = []
-    for col in new_nan_mask.columns:
-        plateau_nan_locs.extend(df.index[new_nan_mask[col]])
-
-    plateau_nan_locs = sorted(set(ts for ts in plateau_nan_locs if ts in df_out.index))
-    df_out.loc[plateau_nan_locs] = np.nan
+    if propagate_nan:
+        plateau_nan_locs = []
+        for col in new_nan_mask.columns:
+            plateau_nan_locs.extend(df.index[new_nan_mask[col]])
+        plateau_nan_locs = sorted(set(ts for ts in plateau_nan_locs if ts in df_out.index))
+        df_out.loc[plateau_nan_locs, :] = np.nan
+    else:
+        for col in new_nan_mask.columns:
+            ts_nan = df.index[new_nan_mask[col]]
+            ts_nan = [ts for ts in ts_nan if ts in df_out.index]
+            df_out.loc[ts_nan, col] = np.nan
 
     return df_out
 
@@ -362,43 +385,68 @@ def normalization(
     window_size: str = None,
 ) -> pd.DataFrame:
     """
-    Applies ASWN normalization (with trend) to all
-    numeric columns in a DataFrame.
+    Applies ASWN normalization (with trend) to all numeric columns in a DataFrame.
     The window size is automatically computed from the median time delta.
 
     Args:
         df (pd.DataFrame): Input DataFrame with a DatetimeIndex.
         min_std (float): Minimum allowed standard deviation.
-        min_valid_ratio (float): Min ratio of valid (non-NaN) values.
+        min_valid_ratio (float): Min ratio of valid (non-NaN) values within window.
         alpha (float): Trend blending coefficient (0-1).
 
     Returns:
-        pd.DataFrame: Normalized DataFrame.
+        pd.DataFrame or None: Normalized DataFrame or None if no valid columns remain.
     """
     df = df.copy()
+
     if not isinstance(df.index, pd.DatetimeIndex):
         df.index = pd.to_datetime(df.index, errors="coerce")
     df = df.sort_index()
+
     if window_size is None:
         window_size = 50
     elif isinstance(window_size, str):
-        window_size = int(
-            pd.Timedelta(window_size) / df.index.to_series().diff().median()
-        )
+        window_size = int(pd.Timedelta(window_size) / df.index.to_series().diff().median())
     elif isinstance(window_size, (int, np.integer)):
         pass
     else:
-        raise RuntimeError(
-            "Window size must be None, str or int")
+        raise RuntimeError("Window size must be None, str or int")
+
     for col in df.columns:
         if pd.api.types.is_numeric_dtype(df[col]):
             df[col] = aswn_with_trend(
                 df[col], window_size, min_std, min_valid_ratio, alpha
             )
-    df.attrs["m"] = window_size
-    df = df.loc[:, df.notna().sum() >= window_size]
+            df[col] = df[col].interpolate(method="linear", limit=3, limit_direction="both")
 
-    return df
+    df.attrs["m"] = window_size
+    df = df.loc[:, df.notna().sum() >= window_size]  # Au moins la taille d'une fenêtre
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    any_nan_mask = df.isna().any(axis=1)
+    df.loc[any_nan_mask] = np.nan
+    def has_enough_valid_windows(series, window_size, min_ratio):
+        if len(series) < window_size:
+            return False
+
+        # Calcule combien de valeurs valides dans chaque fenêtre
+        valid_counts = series.rolling(window_size).count()
+
+        # Une fenêtre est valide si elle a exactement window_size valeurs non-NaN
+        valid_windows = (valid_counts == window_size).sum()
+
+        total_windows = len(series) - window_size + 1
+        ratio = valid_windows / max(1, total_windows)
+
+        print(f"[CHECK] {series.name} : {valid_windows} fenêtres valides ({ratio:.1%})")
+
+        return True if ratio >= min_ratio else False
+
+    if not has_enough_valid_windows(df[df.columns[0]], window_size, 0.1):
+        print("[INFO] Aucune dimension avec suffisamment de fenêtres valides. → retour None")
+        return None
+    else:
+        return df
+
 
 
 def define_m_using_clustering(
@@ -406,7 +454,7 @@ def define_m_using_clustering(
     k: int = 3,
     window_sizes: list[str] = None,
     max_points: int = 5000,
-    max_window_sizes: int = 50,
+    max_window_sizes: int = 5,
     max_segments: int = 2000,
     n_jobs: int = 8,
 ) -> list[tuple[int, str, float, float]]:
@@ -414,28 +462,20 @@ def define_m_using_clustering(
     Détermine les meilleures tailles de fenêtre pour l'extraction de motifs
     en se basant sur la stabilité et la densité de clusters via FAISS.
 
-    Retourne une liste triée de (window_size_pts, window_size_str, stabilité, densité)
-    pour les `k` meilleures fenêtres détectées.
-
-    La stabilité est mesurée par la distance moyenne aux plus proches voisins.
-    La densité est mesurée par la proportion de fenêtres proches (< 1.5 * médiane des distances).
+    Cette version intègre un échantillonnage intelligent des fenêtres par variance.
     """
-
-    # --- Estimer la fréquence d’échantillonnage ---
     freq = df.index.to_series().diff().median()
     if pd.isna(freq) or freq <= pd.Timedelta(0):
         freq = pd.Timedelta(seconds=1)
 
-    # --- Génération des tailles de fenêtres candidates ---
     if window_sizes is None:
         max_pts = max(len(df) // 4, 2)
-        n_candidates = min(max_window_sizes * 2, max_pts)
+        n_candidates = min(max_window_sizes * 5, max_pts)
         pts_candidates = np.unique(
             np.round(np.logspace(np.log10(2), np.log10(max_pts), num=n_candidates)).astype(int)
         )
         window_sizes = [str(p * freq) for p in pts_candidates]
 
-    # Conversion des fenêtres en points
     window_sizes_pts = []
     for ws in window_sizes:
         delta = pd.Timedelta(ws)
@@ -449,45 +489,47 @@ def define_m_using_clustering(
         ws_str = pd.tseries.frequencies.to_offset(ws_delta).freqstr
         window_sizes_pts.append((default_pts, ws_str))
 
-    # --- Sous-échantillonnage si trop de points ---
     if len(df) > max_points:
-        idx = np.linspace(0, len(df)-1, max_points, dtype=int)
+        idx = np.linspace(0, len(df) - 1, max_points, dtype=int)
         df = df.iloc[idx]
 
-    # --- Fonction d’évaluation FAISS ---
     def eval_window(values: np.ndarray, ws_pts: int, ws_str: str):
         try:
             segs = np.lib.stride_tricks.sliding_window_view(values, ws_pts)
         except ValueError:
             return None
-        n = segs.shape[0]
-        if n < 2:
+        if segs.shape[0] < 2:
             return None
-        if n > max_segments:
-            idx = np.random.choice(n, max_segments, replace=False)
-            segs = segs[idx]
-            n = max_segments
-        mask = ~np.isnan(segs).any(axis=1)
-        segs = segs[mask]
-        n = segs.shape[0]
-        if n < 2:
+
+        # Échantillonnage intelligent par variance
+        valid_counts = np.sum(~np.isnan(segs), axis=1)
+        segs = segs[valid_counts >= 2]
+        seg_var = np.nanstd(segs, axis=1, ddof=0)
+        idx_sorted = np.argsort(-seg_var)  # décroissant
+        if len(idx_sorted) > max_segments:
+            segs = segs[idx_sorted[:max_segments]]
+        else:
+            segs = segs[idx_sorted]
+
+        segs = segs[~np.isnan(segs).any(axis=1)]
+        if len(segs) < 2:
             return None
+
         segs = (segs - segs.mean(axis=1, keepdims=True)) / (segs.std(axis=1, keepdims=True) + 1e-8)
-        index = faiss.IndexFlatL2(ws_pts)
         segs_f = segs.astype(np.float32)
+
+        index = faiss.IndexFlatL2(ws_pts)
         index.add(segs_f)
         dists, _ = index.search(segs_f, 2)
         nn = dists[:, 1]
         stability = np.median(nn) / ws_pts
-        density = (nn < stability * 1.5).sum() / n
+        density = (nn < stability * 1.5).sum() / len(nn)
         return (ws_pts, ws_str, stability, density)
 
-    # --- Prendre toutes les colonnes numériques ---
     num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
     if not num_cols:
         raise ValueError("No numeric columns available for clustering.")
 
-    # --- Calcul pour chaque dimension ---
     results_by_ws = {ws_str: {"stability": [], "density": [], "pts": pts}
                      for pts, ws_str in window_sizes_pts}
     for col in num_cols:
@@ -503,7 +545,6 @@ def define_m_using_clustering(
             results_by_ws[ws_str]["stability"].append(stab)
             results_by_ws[ws_str]["density"].append(dens)
 
-    # --- Agrégation multi-dimensionnelle ---
     aggregated = []
     for ws_str, metrics in results_by_ws.items():
         if not metrics["stability"]:
@@ -515,24 +556,113 @@ def define_m_using_clustering(
     if not aggregated:
         raise ValueError("No window size evaluated successfully.")
 
-    # --- Meilleure fenêtre selon score densité / stabilité ---
     scores = {
         ws_str: np.mean(m["density"]) / np.median(m["stability"])
         for ws_str, m in results_by_ws.items() if m["stability"]
     }
     best_ws = max(window_sizes_pts, key=lambda tpl: scores.get(tpl[1], -np.inf))
 
-    # --- Échantillonnage aléatoire (sauf meilleure) ---
     if len(window_sizes_pts) > max_window_sizes:
         candidates = [ws for ws in window_sizes_pts if ws != best_ws]
         sampled = random.sample(candidates, max_window_sizes - 1)
         window_sizes_pts = sampled + [best_ws]
         random.shuffle(window_sizes_pts)
 
-    # --- Sélection finale : top-k par stabilité ---
     aggregated.sort(key=lambda x: x[2])
     final = aggregated[:k]
     return final
+
+
+def cluster_dimensions(
+    df: Union[pd.DataFrame, List[pd.DataFrame]],
+    n_clusters: int = 30,
+    group_size: int = 3,
+    top_k: int = 3,
+    min_std: float = 1e-2,
+    min_valid_ratio: float = 0.8,
+) -> List[List[str]]:
+    """
+    Cluster les dimensions d'un DataFrame selon leur comportement temporel.
+    Retourne au maximum top_k sous-groupes (de taille group_size max),
+    triés par cohérence temporelle (corrélation intra-groupe).
+
+    Parameters
+    ----------
+    df : DataFrame ou liste de DataFrames
+    n_clusters : int
+        Nombre de clusters produits par KMeans.
+    group_size : int
+        Taille maximale d’un sous-cluster.
+    top_k : int
+        Nombre maximal de sous-clusters retournés.
+    min_std : float
+        Écart-type minimal pour garder une colonne.
+    min_valid_ratio : float
+        Ratio minimal de valeurs valides.
+
+    Returns
+    -------
+    clusters : list of list of str
+        Liste de clusters (max top_k), chacun avec noms de colonnes + "timestamp".
+    """
+    if isinstance(df, pd.DataFrame):
+        df_list = [df]
+    elif isinstance(df, list) and all(isinstance(x, pd.DataFrame) for x in df):
+        df_list = df
+    else:
+        raise TypeError("df must be a DataFrame or a list of DataFrames")
+
+    clusters = []
+
+    for base_df in df_list:
+        base_df = base_df.select_dtypes(include=[np.number])
+
+        valid_cols = [
+            col for col in base_df.columns
+            if base_df[col].std() >= min_std and base_df[col].notna().mean() >= min_valid_ratio
+        ]
+        if not valid_cols:
+            continue
+
+        data = base_df[valid_cols].copy().transpose()
+        data = data.fillna(data.mean(axis=1)).fillna(0.0)
+
+        scaler = StandardScaler()
+        data_scaled = scaler.fit_transform(data)
+
+        kmeans = KMeans(n_clusters=min(n_clusters, len(data)), random_state=42, n_init='auto')
+        labels = kmeans.fit_predict(data_scaled)
+
+        # Regroupement des colonnes par cluster
+        label_map = {}
+        for col, label in zip(valid_cols, labels):
+            label_map.setdefault(label, []).append(col)
+
+        # Fonction de cohérence interne (corrélation moyenne)
+        def avg_corr(cluster_cols):
+            if len(cluster_cols) < 2:
+                return 0
+            corr_matrix = base_df[cluster_cols].corr().abs()
+            tril_corr = corr_matrix.where(np.tril(np.ones(corr_matrix.shape), k=-1).astype(bool))
+            return tril_corr.stack().mean()
+
+        # Trie des clusters KMeans par cohérence interne
+        sorted_clusters = sorted(
+            label_map.values(),
+            key=lambda cols: avg_corr(cols),
+            reverse=True
+        )
+
+        # Découpe et sélection des top_k sous-clusters uniquement
+        for cluster_cols in sorted_clusters:
+            for i in range(0, len(cluster_cols), group_size):
+                if len(clusters) >= top_k:
+                    return clusters
+                subcluster = cluster_cols[i:i + group_size]
+                clusters.append(subcluster + ["timestamp"])
+
+    return clusters
+
 
 
 def pre_processed(
@@ -543,89 +673,135 @@ def pre_processed(
     alpha: float = 0.65,
     window_size: str = None,
     sort_by_variables: bool = True,
-) -> Union[pd.DataFrame, List[pd.DataFrame]]:
-    """Full preprocessing pipeline for one or several DataFrames.
-
-    Parameters
-    ----------
-    df : DataFrame or list of DataFrame
-        Input data to preprocess.
-    gap_multiplier : float, optional
-        Maximum gap in multiples of the base frequency considered for
-        interpolation.
-    min_std : float, optional
-        Minimum standard deviation used during normalization.
-    min_valid_ratio : float, optional
-        Minimum ratio of valid samples in the sliding window.
-    alpha : float, optional
-        Trend blending coefficient for ASWN normalization.
-    window_size : str, optional
-        Window size as pandas offset string (e.g. ``"1h"``). If ``None`` it is
-        estimated.
-    sort_by_variables : bool, optional
-        Whether to preprocess each variable independently when ``df`` is a list.
-
-    Returns
-    -------
-    DataFrame or list of DataFrame
-        Preprocessed data ready for motif discovery.
+    cluster: bool = False,
+    normalize: bool = True,
+) -> Union[pd.DataFrame, List[pd.DataFrame], List[List[pd.DataFrame]]]:
+    """
+    Full preprocessing pipeline for one or several DataFrames.
+    - Interpolation & synchronisation
+    - Clustering (optionnel)
+    - Normalisation (optionnelle)
+    - Détection de fenêtre (optionnelle)
     """
 
-    window_size_forward = None
-    # Type check
-    if not (
-        isinstance(df, pd.DataFrame)
-        or (isinstance(df, list) and all(isinstance(x, pd.DataFrame) for x in df))
-    ):
-        raise TypeError("df must be a pd.DataFrame or a list of pd.DataFrame")
+    final_window_size = None
 
-    # If list of DataFrames
+    # === Cas d'une liste de DataFrames ===
     if isinstance(df, list):
-        # Drop lat/lon and sync on common grid
-        dataframes = synchronize_on_common_grid(df, sort_by_variables=sort_by_variables)
+        synced_dfs = synchronize_on_common_grid(df, sort_by_variables=sort_by_variables)
 
-        # estimate or override window_size
-        if window_size is None:
-            wins = define_m_using_clustering(dataframes[0])
-            window_size_forward = wins[0][1]
-            print(f"[WINDOW LIST] Fenêtre retenue (variables séparées) → {window_size_forward}")
+        if cluster:
+            clustered_groups = cluster_dimensions(synced_dfs)
+            cluster_outputs = []
+
+            for group in sorted(clustered_groups, reverse=True):
+                group_result = []
+
+                for clustered_df in group:
+                    if window_size is None:
+                        win_list = define_m_using_clustering(clustered_df)
+                        final_window_size = win_list[0][1]
+                        print(f"[WINDOW LIST - Cluster] Fenêtre → {final_window_size}")
+                    else:
+                        final_window_size = window_size
+                        print(f"[WINDOW LIST - Cluster] Fenêtre utilisateur → {final_window_size}")
+
+                    if normalize:
+                        clustered_df = normalization(
+                            clustered_df,
+                            min_std=min_std,
+                            min_valid_ratio=min_valid_ratio,
+                            alpha=alpha,
+                            window_size=final_window_size
+                        )
+                    group_result.append(clustered_df)
+
+                # Garder seulement les groupes complets
+                group_result = [df_ for df_ in group_result if df_ is not None and not df_.empty]
+                if len(group_result) == len(group):
+                    cluster_outputs.extend(group_result)  # ✅ Ajoute chaque cluster individuellement
+
+            return cluster_outputs
+
         else:
-            window_size_forward = window_size
-            print(f"[WINDOW LIST] Fenêtre utilisateur → {window_size_forward}")
+            if window_size is None:
+                win_list = define_m_using_clustering(synced_dfs[0])
+                final_window_size = win_list[0][1]
+                print(f"[WINDOW LIST] Fenêtre retenue → {final_window_size}")
+            else:
+                final_window_size = window_size
+                print(f"[WINDOW LIST] Fenêtre utilisateur → {final_window_size}")
 
-        
-        return [
-            normalization(
-                df_v,
-                min_std=min_std,
-                min_valid_ratio=min_valid_ratio,
-                alpha=alpha,
-                window_size=window_size_forward
-            )
-            for df_v in dataframes
-        ]
+            if normalize:
+                return [
+                    normalization(
+                        df_single,
+                        min_std=min_std,
+                        min_valid_ratio=min_valid_ratio,
+                        alpha=alpha,
+                        window_size=final_window_size
+                    ) for df_single in synced_dfs
+                ]
+            else:
+                return synced_dfs
 
-    # Single DataFrame path
-    df_preprocessed = df.copy()
-    # Step 1: interpolation
-    df_preprocessed = interpolate(df_preprocessed, gap_multiplier)
+    if cluster:
 
-    # Step 2: estimate or override window size
+        # Étape 1 : interpolation sans propagation globale de NaN
+        interpolated_df = interpolate(df.copy(), gap_multiplier=gap_multiplier, propagate_nan=False)
+
+        # 2. Étape : clustering → tu récupères les noms de colonnes de chaque cluster
+        clusters = cluster_dimensions(interpolated_df)
+
+        cluster_outputs = []
+        group_result = []
+        for i, col_names in enumerate(clusters):
+            cluster_df = df[col_names].copy()
+
+            clustered_df = interpolate(cluster_df, gap_multiplier=gap_multiplier)
+            if window_size is None:
+                win_list = define_m_using_clustering(clustered_df)
+                final_window_size = win_list[0][1]
+                print(f"[WINDOW] Fenêtre retenue → {final_window_size}")
+            else:
+                final_window_size = window_size
+           
+
+            if normalize:
+                clustered_df = normalization(
+                    clustered_df,
+                    min_std=min_std,
+                    min_valid_ratio=min_valid_ratio,
+                    alpha=alpha,
+                    window_size=final_window_size
+                )
+
+
+            if clustered_df is not None and not clustered_df.empty:
+                group_result.append(clustered_df)
+        return group_result
+
+
+    # === Cas sans clustering ===
+    interpolated_df = interpolate(df.copy(), gap_multiplier)
+
     if window_size is None:
-        wins = define_m_using_clustering(df_preprocessed)
-        window_size_forward = wins[0][1]
-        print(f"[WINDOW] Fenêtre retenue (meilleure) → {window_size_forward}")
+        win_list = define_m_using_clustering(interpolated_df)
+        final_window_size = win_list[0][1]
+        print(f"[WINDOW] Fenêtre retenue → {final_window_size}")
     else:
-        window_size_forward = window_size
-        print(f"[WINDOW] Fenêtre utilisateur → {window_size_forward}")
+        final_window_size = window_size
+        print(f"[WINDOW] Fenêtre utilisateur → {final_window_size}")
 
-    # Step 3: normalization
-    df_preprocessed = normalization(
-        df_preprocessed,
-        min_std=min_std,
-        min_valid_ratio=min_valid_ratio,
-        alpha=alpha,
-        window_size=window_size_forward
-    )
+    if normalize:
 
-    return df_preprocessed
+        interpolated_df = normalization(
+            interpolated_df,
+            min_std=min_std,
+            min_valid_ratio=min_valid_ratio,
+            alpha=alpha,
+            window_size=final_window_size
+        )
+
+
+    return interpolated_df

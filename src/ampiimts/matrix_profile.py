@@ -21,6 +21,7 @@ def matrix_profile_process(
     max_motifs: int = 3,
     discord_top_pct: float = 0.04,
     max_matches: int = 10,
+    cluster:bool = False,
 ) -> dict:
     """Return matrix profile related data for a single DataFrame."""
 
@@ -42,89 +43,103 @@ def matrix_profile_process(
         raise ValueError(
             "All columns must be numeric for matrix profile computation."
         )
-
+    
     # ==== UNIVARIATE ====
     if df.shape[1] == 1:
-        # Delegate to motif discovery helper for one variable
-        return discover_patterns_stumpy_mixed(
+        try:
+                
+            # Delegate to motif discovery helper for one variable
+            return discover_patterns_stumpy_mixed(
+                df,
+                window_size,
+                max_motifs=max_motifs,
+                discord_top_pct=discord_top_pct,
+                max_matches=max_matches,
+            )
+        except ValueError as e:
+            print(f"[MatrixProfile Warning] Échec du calcul avec fenêtre {window_size} → {e}")
+            return None
+
+
+
+    # ==== MULTIVARIATE ====
+    try:
+        return discover_patterns_mstump_mixed(
             df,
             window_size,
             max_motifs=max_motifs,
             discord_top_pct=discord_top_pct,
             max_matches=max_matches,
+            cluster=cluster,
         )
-
-    # ==== MULTIVARIATE ====
-    return discover_patterns_mstump_mixed(
-        df,
-        window_size,
-        max_motifs=max_motifs,
-        discord_top_pct=discord_top_pct,
-        max_matches=max_matches,
-    )
-
+    except ValueError as e:
+        print(f"[MatrixProfile Warning] Échec du calcul avec fenêtre {window_size} → {e}")
+        return None
 
 def matrix_profile(
-    df_o: Union[pd.DataFrame, List[pd.DataFrame]],
+    df_o: Union[pd.DataFrame, List[pd.DataFrame], List[List[pd.DataFrame]]],
     window_size: Optional[int] = None,
     n_jobs: int = 4,
     column: str | None = None,
     max_motifs: int = 5,
     discord_top_pct: float = 0.04,
     max_matches: int = 10,
-) -> Union[pd.DataFrame, List[pd.DataFrame]]:
-    """Compute the matrix profile for one or several DataFrames.
+    cluster:bool = False,
+) -> Union[dict, List[dict], List[List[dict]]]:
+    """Compute the matrix profile for one or several DataFrames."""
+        
+    if df_o is None or (isinstance(df_o, list) and all(x is None for x in df_o)):
+        return None
 
-    Parameters
-    ----------
-    df_o : DataFrame or list of DataFrame
-        Time series data to process.
-    window_size : int, optional
-        Length of the subsequences. If ``None`` the value stored in
-        ``df_o.attrs['m']`` is used when available.
-    n_jobs : int
-        Number of parallel workers when ``df_o`` is a list.
-    column : str, optional
-        Column name for univariate input.
-    max_motifs : int
-        Maximum number of motifs to detect.
-    discord_top_pct : float
-        Fraction of discords to return.
-    max_matches : int
-        Maximum matches per motif.
+    if isinstance(df_o, pd.DataFrame):
+        # Un seul DataFrame
+        if column is None and len(df_o.columns) == 1:
+            column = df_o.columns[0]
+        if window_size is None and "m" in df_o.attrs:
+            window_size = df_o.attrs["m"]
 
-    Returns
-    -------
-    DataFrame or list of DataFrame
-        The computed matrix profile(s).
-    """
-    if not (
-        isinstance(df_o, pd.DataFrame) or
-        (isinstance(
-            df_o, list) and all(isinstance(x, pd.DataFrame) for x in df_o))
-    ):
-        raise TypeError("df must be a pd.DataFrame or a list of pd.DataFrame")
-    if isinstance(df_o, list):
-        result = []
-        [result.append(matrix_profile_process(df, window_size=window_size)) for df in df_o]
-        return result
+        return matrix_profile_process(
+            df_o,
+            window_size=window_size,
+            column=column,
+            max_motifs=max_motifs,
+            discord_top_pct=discord_top_pct,
+            max_matches=max_matches,
+            cluster=cluster,
+        )
 
+    elif isinstance(df_o, list) and all(isinstance(x, pd.DataFrame) for x in df_o):
+        # Liste plate de DataFrames
+        return [
+            matrix_profile_process(
+                df,
+                window_size=window_size,
+                column=column,
+                max_motifs=max_motifs,
+                discord_top_pct=discord_top_pct,
+                max_matches=max_matches,
+                cluster=cluster,
+            )
+            for df in df_o
+        ]
 
-    # Automatically pick the sole column for univariate series
-    if column is None and len(df_o.columns) == 1:
-        column = df_o.columns[0]
+    elif isinstance(df_o, list) and all(isinstance(x, list) for x in df_o):
+        # Liste de listes de DataFrames (cas avec cluster=True et plusieurs séries)
+        return [
+            [
+                matrix_profile_process(
+                    df,
+                    window_size=window_size,
+                    column=column,
+                    max_motifs=max_motifs,
+                    discord_top_pct=discord_top_pct,
+                    max_matches=max_matches,
+                    cluster=cluster,
+                )
+                for df in sublist
+            ]
+            for sublist in df_o
+        ]
 
-    # Use the preprocessing attribute if no window size is provided
-    if window_size is None and "m" in df_o.attrs:
-        window_size = df_o.attrs["m"]
-
-    df_profile = matrix_profile_process(
-        df_o,
-        window_size=window_size,
-        column=column,
-        max_motifs=max_motifs,
-        discord_top_pct=discord_top_pct,
-        max_matches=max_matches,
-    )
-
-    return df_profile
+    else:
+        raise TypeError("df must be a DataFrame, a list of DataFrames, or a list of lists of DataFrames")

@@ -18,6 +18,8 @@ from .plotting import (
     plot_patterns_and_discords,
     plot_multidim_patterns_and_discords,
     plot_motif_overlays,
+    plot_all_motif_overlays,
+    plot_all_patterns_and_discords,
 )
 
 from .matrix_profile import matrix_profile
@@ -41,4 +43,6 @@ __all__ = [
     "discover_patterns_stumpy_mixed",
     "discover_patterns_mstump_mixed",
     "plot_motif_overlays",
+    "plot_all_motif_overlays",
+    "plot_all_patterns_and_discords",
 ]

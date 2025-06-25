@@ -84,3 +84,6 @@ venv.bak/
 
 #folder
 dataset/
+
+#test files
+main.py
