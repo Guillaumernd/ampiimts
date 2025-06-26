@@ -22,6 +22,8 @@ def matrix_profile_process(
     discord_top_pct: float = 0.04,
     max_matches: int = 10,
     cluster:bool = False,
+    motif:bool=False,
+
 ) -> dict:
     """Return matrix profile related data for a single DataFrame."""
 
@@ -71,6 +73,7 @@ def matrix_profile_process(
             discord_top_pct=discord_top_pct,
             max_matches=max_matches,
             cluster=cluster,
+            motif=motif,
         )
     except ValueError as e:
         print(f"[MatrixProfile Warning] Échec du calcul avec fenêtre {window_size} → {e}")
@@ -85,6 +88,8 @@ def matrix_profile(
     discord_top_pct: float = 0.04,
     max_matches: int = 10,
     cluster:bool = False,
+    motif:bool =False,
+
 ) -> Union[dict, List[dict], List[List[dict]]]:
     """Compute the matrix profile for one or several DataFrames."""
         
@@ -119,6 +124,7 @@ def matrix_profile(
                 discord_top_pct=discord_top_pct,
                 max_matches=max_matches,
                 cluster=cluster,
+                motif=motif,
             )
             for df in df_o
         ]
@@ -135,6 +141,7 @@ def matrix_profile(
                     discord_top_pct=discord_top_pct,
                     max_matches=max_matches,
                     cluster=cluster,
+                    motif=motif,
                 )
                 for df in sublist
             ]

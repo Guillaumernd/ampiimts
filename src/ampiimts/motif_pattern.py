@@ -217,6 +217,7 @@ def discover_patterns_stumpy_mixed(
         'window_size': window_size
     }
 
+
 def discover_patterns_mstump_mixed(
     df: pd.DataFrame,
     window_size: int,
@@ -226,6 +227,7 @@ def discover_patterns_mstump_mixed(
     min_mdl_ratio: float = 0.25,
     verbose: bool = True,
     cluster: bool = False,
+    motif: bool = False,
 ):
     """
     1. Calcul de mstump sur X multi-dim : P, I
@@ -240,7 +242,7 @@ def discover_patterns_mstump_mixed(
     d, n = X.shape
     if d < 2:
         raise ValueError("Il faut au moins 2 dimensions.")
-
+    
     if not cluster:
         # 1) Matrix Profile complet
         P, I = stumpy.mstump(X, m=window_size, normalize=False, discords=False)
@@ -277,17 +279,19 @@ def discover_patterns_mstump_mixed(
         df = df.iloc[:, selected_dims]
         d = X.shape[0]
 
-    # 3) Matrix Profile réduit (motifs + discords)
-    P, I = stumpy.mstump(X, m=window_size, normalize=False, discords=False)
+    if motif:
+            
+        # 3) Matrix Profile réduit (motifs + discords)
+        P, I = stumpy.mstump(X, m=window_size, normalize=False, discords=False)
 
-    # 4) MMOTIFS
-    motif_distances, motif_indices, motif_subspaces, motif_mdls = stumpy.mmotifs(
-        X, P, I,
-        max_motifs=max_motifs,
-        min_neighbors=4,
-        max_matches=max_matches,
-        normalize=False,
-    )
+        # 4) MMOTIFS
+        motif_distances, motif_indices, motif_subspaces, motif_mdls = stumpy.mmotifs(
+            X, P, I,
+            max_motifs=max_motifs,
+            min_neighbors=4,
+            max_matches=max_matches,
+            normalize=False,
+        )
 
     # 5) Discords filtrés
     P_disc, _ = stumpy.mstump(X, m=window_size, normalize=False, discords=True)
@@ -325,87 +329,86 @@ def discover_patterns_mstump_mixed(
         columns=mp_df.columns
     )
 
+
     # 6) Traitement motifs
     aligned_patterns = []
-    occupied = []
-
-    for motif_id, subspace in enumerate(motif_subspaces):
-        min_dims = max(1, int(0.40 * d))
-        if np.count_nonzero(subspace) < min_dims:
-            continue
-
-        motif_starts = []
-        for group in motif_indices[motif_id]:
-            for idx in np.atleast_1d(group):
-                idx = int(idx)
-                if idx + window_size <= len(df):
-                    motif_starts.append(idx)
-
-        motif_starts = [s + window_size // 2 for s in motif_starts]
-
-        if len(motif_starts) < 2:
-            continue
-
-        medoid_start = motif_starts[0]
-
-        valid_motif_starts = []
-        for s in motif_starts:
-            if any(abs(s - d0) < window_size for d0 in discords):
+    if motif:
+        occupied = []
+        for motif_id, subspace in enumerate(motif_subspaces):
+            min_dims = max(1, int(0.40 * d))
+            if np.count_nonzero(subspace) < min_dims:
                 continue
-            span = (s, s + window_size)
-            if any(max(s, o[0]) < min(span[1], o[1]) for o in occupied):
+
+            motif_starts = []
+            for group in motif_indices[motif_id]:
+                for idx in np.atleast_1d(group):
+                    idx = int(idx)
+                    if idx + window_size <= len(df):
+                        motif_starts.append(idx)
+
+            if len(motif_starts) < 2:
                 continue
-            valid_motif_starts.append(s)
-            occupied.append(span)
 
-        if len(valid_motif_starts) > 3 :
-            segments = [
-                X[:, s - window_size // 2 : s + window_size // 2]
-                for s in valid_motif_starts
-                if s - window_size // 2 >= 0 and s + window_size // 2 <= X.shape[1]
-            ]
-            segments = [seg for seg in segments if seg.shape[1] == window_size]
-            segs_arr = np.stack(segments).astype('float32')
-            n, d, w = segs_arr.shape
-            segs_arr = segs_arr.reshape(n, d * w)
+            medoid_start = motif_starts[0]
 
-            index = faiss.IndexFlatL2(segs_arr.shape[1])
-            index.add(segs_arr)
-            D, _ = index.search(segs_arr, n)
-
-            # 3. Identifier le segment médian
-            sum_dists = D.sum(axis=1)
-            med_loc = int(np.argmin(sum_dists))
-            medoid_start = valid_motif_starts[med_loc]
-            medoid_seg = segments[med_loc]  # matrice (d, window_size)
-            matches = stumpy.match(
-                Q=medoid_seg,
-                T=X,
-                normalize=False
-            )
-            distance_threshold = 0.135 * np.linalg.norm(medoid_seg)
-            motif_starts = [
-                int(idx) for dist, idx in matches if dist < distance_threshold]
-            # Filtrer les motifs chevauchant des discords
-            motif_starts = [
-                s for s in motif_starts
-                if not any((d >= s) and (d < s + window_size) for d in discords)
-            ]
-            filtered = []
-            for s in sorted(motif_starts):
+            valid_motif_starts = []
+            for s in motif_starts:
+                if any(abs(s - d0) < window_size for d0 in discords):
+                    continue
                 span = (s, s + window_size)
-                if not any(max(s, o[0]) < min(span[1], o[1]) for o in occupied):
-                    filtered.append(s)
-                    occupied.append(span)
+                if any(max(s, o[0]) < min(span[1], o[1]) for o in occupied):
+                    continue
+                valid_motif_starts.append(s)
+                occupied.append(span)
 
-            if not filtered:
-                continue
+            if len(valid_motif_starts) > 2 :
+                segments = [
+                    X[:, s : s + window_size]
+                    for s in valid_motif_starts
+                    if s + window_size <= X.shape[1]
+                ]
+                segments = [seg for seg in segments if seg.shape[1] == window_size]
+                segs_arr = np.stack(segments).astype('float32')
+                n, d, w = segs_arr.shape
+                segs_arr = segs_arr.reshape(n, d * w)
 
-            aligned_patterns.append({
-                "pattern_label": f"mmotif_{motif_id + 1}",
-                "medoid_idx": medoid_start,
-                "motif_indices_debut": filtered
-            })
+                index = faiss.IndexFlatL2(segs_arr.shape[1])
+                index.add(segs_arr)
+                D, _ = index.search(segs_arr, n)
+
+                # 3. Identifier le segment médian
+                sum_dists = D.sum(axis=1)
+                med_loc = int(np.argmin(sum_dists))
+                medoid_start = valid_motif_starts[med_loc]
+                medoid_seg = segments[med_loc]  # matrice (d, window_size)
+                matches = stumpy.match(
+                    Q=medoid_seg,
+                    T=X,
+                    normalize=False
+                )
+                distance_threshold = 0.135 * np.linalg.norm(medoid_seg)
+                motif_starts = [
+                    int(idx) for dist, idx in matches if dist < distance_threshold]
+                # Filtrer les motifs chevauchant des discords
+                motif_starts = [
+                    s for s in motif_starts
+                    if not any((d >= s) and (d < s + window_size) for d in discords)
+                ]
+                filtered = []
+                for s in sorted(motif_starts):
+                    span = (s, s + window_size)
+                    if not any(max(s, o[0]) < min(span[1], o[1]) for o in occupied):
+                        filtered.append(s)
+                        occupied.append(span)
+
+                if not filtered:
+                    continue
+
+                aligned_patterns.append({
+                    "pattern_label": f"mmotif_{motif_id + 1}",
+                    "medoid_idx": medoid_start,
+                    "motif_indices_debut": filtered
+                })
     return {
         "patterns": aligned_patterns,
         "discord_indices": discords,

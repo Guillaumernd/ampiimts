@@ -266,7 +266,7 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
     # Redessiner discords sur la heat-map
     for d in discords:
         xd = mdates.date2num(df.index[d])
-        axh.axvline(xd, color="red", linestyle="--", alpha=0.5, linewidth=0.4)
+        axh.axvline(xd, color="red", linestyle="--", alpha=0.3, linewidth=0.15)
 
     # Redessiner motifs (rectangles) mais uniquement sur les dims actives
     for pat_id, pat in enumerate(patterns):
@@ -312,7 +312,8 @@ def plot_motif_overlays(df, result, normalize=False):
     window_size = result["window_size"]
     patterns = result["patterns"]
     profile_df = result["matrix_profile"]
-
+    if patterns:
+        print(f"\n--- Cluster {i+1} ---")
     # 1) Extraire les noms des colonnes originales à partir du matrix_profile
     original_cols = [col.replace("mp_dim_", "") for col in profile_df.columns]
     df = df.loc[:, original_cols]
@@ -321,6 +322,7 @@ def plot_motif_overlays(df, result, normalize=False):
     motif_colors = ["tab:green", "tab:purple", "tab:blue", "tab:orange", "tab:brown", "tab:pink"]
 
     for i, pat in enumerate(patterns):
+        
         fig, axs = plt.subplots(n_dim, 1, figsize=(12, 2 * n_dim), sharex=True)
         if n_dim == 1:
             axs = [axs]
@@ -401,7 +403,6 @@ def plot_all_motif_overlays(df, result, normalize=False):
             plot_motif_overlays(df, None, normalize=normalize)
         elif isinstance(df, list) and all(isinstance(d, pd.DataFrame) for d in df):
             for i, d in enumerate(df):
-                print(f"\n--- Cluster {i+1} ---")
                 plot_motif_overlays(d, None, normalize=normalize)
         elif isinstance(df, list) and all(isinstance(d, list) for d in df):
             for serie_id, serie_df_list in enumerate(df):
@@ -419,7 +420,6 @@ def plot_all_motif_overlays(df, result, normalize=False):
     elif isinstance(df, list) and isinstance(result, list):
         if all(isinstance(d, pd.DataFrame) for d in df) and all(isinstance(r, dict) for r in result):
             for i, (d, r) in enumerate(zip(df, result)):
-                print(f"\n--- Cluster {i+1} ---")
                 plot_motif_overlays(d, r, normalize=normalize)
 
         elif all(isinstance(d, list) for d in df) and all(isinstance(r, list) for r in result):

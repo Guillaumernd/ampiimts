@@ -5,6 +5,7 @@ from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import AgglomerativeClustering
 from itertools import combinations
 from joblib import Parallel, delayed
 import warnings
@@ -283,16 +284,29 @@ def interpolate(
     # Réinjecter les NaN des plateaux incohérents
     if propagate_nan:
         plateau_nan_locs = []
+        new_nan_mask = new_nan_mask.reindex(df.index)
         for col in new_nan_mask.columns:
-            plateau_nan_locs.extend(df.index[new_nan_mask[col]])
+            if col == "timestamp":
+                continue 
+            mask = df[col].copy()
+            mask = mask.fillna(False)
+            mask = mask.infer_objects(copy=False)
+            mask = mask.astype(bool)
+            plateau_nan_locs.extend(df.index[mask])
         plateau_nan_locs = sorted(set(ts for ts in plateau_nan_locs if ts in df_out.index))
         df_out.loc[plateau_nan_locs, :] = np.nan
     else:
+        new_nan_mask = new_nan_mask.reindex(df.index)
         for col in new_nan_mask.columns:
-            ts_nan = df.index[new_nan_mask[col]]
+            if col == "timestamp":
+                continue 
+            mask = df[col].copy()
+            mask = mask.fillna(False)
+            mask = mask.infer_objects(copy=False)
+            mask = mask.astype(bool)
+            ts_nan = df.index[mask]
             ts_nan = [ts for ts in ts_nan if ts in df_out.index]
             df_out.loc[ts_nan, col] = np.nan
-
     return df_out
 
 
@@ -572,45 +586,40 @@ def define_m_using_clustering(
     final = aggregated[:k]
     return final
 
+from typing import Union, List
+import pandas as pd
+import numpy as np
+from sklearn.cluster import AgglomerativeClustering
+from collections import defaultdict
+import re
 
 def cluster_dimensions(
     df: Union[pd.DataFrame, List[pd.DataFrame]],
-    n_clusters: int = 30,
-    group_size: int = 3,
-    top_k: int = 3,
+    group_size: int = 5,
+    top_k: int = 5,
     min_std: float = 1e-2,
     min_valid_ratio: float = 0.8,
+    min_cluster_size: int = 2,
+    mode: str = 'hybrid'  # 'motif', 'discord', 'hybrid'
 ) -> List[List[str]]:
     """
-    Cluster les dimensions d'un DataFrame selon leur comportement temporel.
-    Retourne au maximum top_k sous-groupes (de taille group_size max),
-    triés par cohérence temporelle (corrélation intra-groupe).
-
-    Parameters
-    ----------
-    df : DataFrame ou liste de DataFrames
-    n_clusters : int
-        Nombre de clusters produits par KMeans.
-    group_size : int
-        Taille maximale d’un sous-cluster.
-    top_k : int
-        Nombre maximal de sous-clusters retournés.
-    min_std : float
-        Écart-type minimal pour garder une colonne.
-    min_valid_ratio : float
-        Ratio minimal de valeurs valides.
-
-    Returns
-    -------
-    clusters : list of list of str
-        Liste de clusters (max top_k), chacun avec noms de colonnes + "timestamp".
+    Cluster les dimensions d’un DataFrame selon leur cohérence temporelle.
+    Trois modes : 'motif' (groupes homogènes), 'discord' (groupes variés),
+    ou 'hybrid' (groupes complémentaires).
+    Affiche aussi :
+      - La corrélation moyenne entre clusters et le reste des colonnes
+      - La corrélation moyenne entre familles de capteurs (par nom)
     """
+
     if isinstance(df, pd.DataFrame):
         df_list = [df]
     elif isinstance(df, list) and all(isinstance(x, pd.DataFrame) for x in df):
         df_list = df
     else:
         raise TypeError("df must be a DataFrame or a list of DataFrames")
+
+    if mode not in {'motif', 'discord', 'hybrid'}:
+        raise ValueError("mode must be 'motif', 'discord', or 'hybrid'")
 
     clusters = []
 
@@ -621,48 +630,105 @@ def cluster_dimensions(
             col for col in base_df.columns
             if base_df[col].std() >= min_std and base_df[col].notna().mean() >= min_valid_ratio
         ]
-        if not valid_cols:
+        if len(valid_cols) < 2:
             continue
 
-        data = base_df[valid_cols].copy().transpose()
-        data = data.fillna(data.mean(axis=1)).fillna(0.0)
+        # Matrice de corrélation
+        corr = base_df[valid_cols].corr()
 
-        scaler = StandardScaler()
-        data_scaled = scaler.fit_transform(data)
+        # Distance en fonction du mode choisi
+        if mode == 'motif':
+            dist = 1 - corr.pow(2).abs()
+        elif mode == 'discord':
+            dist = 1 - corr.abs()
+        elif mode == 'hybrid':
+            dist = 1 - corr
 
-        kmeans = KMeans(n_clusters=min(n_clusters, len(data)), random_state=42, n_init='auto')
-        labels = kmeans.fit_predict(data_scaled)
+        dist = dist.fillna(1.0)
 
-        # Regroupement des colonnes par cluster
+        # Distance moyenne pour seuil dynamique
+        tril_values = dist.where(np.tril(np.ones(dist.shape), -1).astype(bool)).stack()
+        mean_dist = tril_values.mean()
+        std_dist = tril_values.std()
+        distance_threshold = mean_dist - 0.5 * std_dist
+
+        # Clustering hiérarchique
+        model = AgglomerativeClustering(
+            metric='precomputed',
+            linkage='average',
+            distance_threshold=distance_threshold,
+            n_clusters=None
+        )
+        labels = model.fit_predict(dist.values)
+
+        # Construction des clusters
         label_map = {}
         for col, label in zip(valid_cols, labels):
             label_map.setdefault(label, []).append(col)
 
-        # Fonction de cohérence interne (corrélation moyenne)
-        def avg_corr(cluster_cols):
-            if len(cluster_cols) < 2:
+        # Fonction de cohérence moyenne (pour tri)
+        def avg_corr(cols):
+            if len(cols) < 2:
                 return 0
-            corr_matrix = base_df[cluster_cols].corr().abs()
-            tril_corr = corr_matrix.where(np.tril(np.ones(corr_matrix.shape), k=-1).astype(bool))
-            return tril_corr.stack().mean()
+            matrix = base_df[cols].corr().abs()
+            tril = matrix.where(np.tril(np.ones(matrix.shape), -1).astype(bool))
+            return tril.stack().mean()
 
-        # Trie des clusters KMeans par cohérence interne
+        # Tri des clusters
         sorted_clusters = sorted(
-            label_map.values(),
-            key=lambda cols: avg_corr(cols),
+            [c for c in label_map.values() if len(c) >= min_cluster_size],
+            key=avg_corr,
             reverse=True
         )
 
-        # Découpe et sélection des top_k sous-clusters uniquement
         for cluster_cols in sorted_clusters:
-            for i in range(0, len(cluster_cols), group_size):
-                if len(clusters) >= top_k:
-                    return clusters
-                subcluster = cluster_cols[i:i + group_size]
-                clusters.append(subcluster + ["timestamp"])
+            if len(clusters) >= top_k:
+                break
+            clusters.append(cluster_cols + ["timestamp"])
+
+        # === Corrélation entre chaque cluster et le reste ===
+        print("\n[Corrélation croisée entre clusters et autres colonnes :]")
+
+        for i, cluster in enumerate(clusters):
+            cluster_vars = [col for col in cluster if col != "timestamp"]
+            others = [col for col in base_df.columns if col not in cluster_vars]
+
+            if not cluster_vars or not others:
+                continue
+
+            sub_corr = base_df[cluster_vars + others].corr().loc[cluster_vars, others]
+            mean_cross_corr = sub_corr.abs().mean().mean()
+            print(f"  ↪ Cluster {i+1:02d} ({len(cluster_vars)} variables) ↔ autres : corr moyenne = {mean_cross_corr:.3f}")
+
+        # === Corrélation entre familles de capteurs ===
+        print("\n[Corrélation entre familles de capteurs :]")
+
+        # Regroupement par famille (avant l’underscore final)
+        family_map = defaultdict(list)
+        for col in base_df.columns:
+            if col == "timestamp":
+                continue
+            match = re.match(r"(.*?)(?:_\d+)?$", col)
+            if match:
+                family = match.group(1)
+                family_map[family].append(col)
+
+        family_names = sorted(family_map)
+        family_corr = pd.DataFrame(index=family_names, columns=family_names, dtype=float)
+
+        for f1 in family_names:
+            for f2 in family_names:
+                cols1, cols2 = family_map[f1], family_map[f2]
+                sub_corr = base_df[cols1 + cols2].corr().loc[cols1, cols2]
+                mean_corr = sub_corr.abs().mean().mean()
+                family_corr.loc[f1, f2] = mean_corr
+
+        print(family_corr.round(2))
+
+    if not clusters:
+        print("Skipping DataFrame: not enough rich dimensions — too much noise, constant values, or missing data.")
 
     return clusters
-
 
 
 def pre_processed(
@@ -755,7 +821,10 @@ def pre_processed(
 
         cluster_outputs = []
         group_result = []
+        group_result_normalize = []
+
         for i, col_names in enumerate(clusters):
+            print(len(col_names))
             cluster_df = df[col_names].copy()
 
             clustered_df = interpolate(cluster_df, gap_multiplier=gap_multiplier)
@@ -766,21 +835,22 @@ def pre_processed(
             else:
                 final_window_size = window_size
            
-
-            if normalize:
-                clustered_df = normalization(
-                    clustered_df,
-                    min_std=min_std,
-                    min_valid_ratio=min_valid_ratio,
-                    alpha=alpha,
-                    window_size=final_window_size
-                )
-
-
+            
             if clustered_df is not None and not clustered_df.empty:
                 group_result.append(clustered_df)
-        return group_result
 
+            clustered_df_normalize = normalization(
+                clustered_df,
+                min_std=min_std,
+                min_valid_ratio=min_valid_ratio,
+                alpha=alpha,
+                window_size=final_window_size
+            )
+                    
+            if clustered_df_normalize is not None and not clustered_df_normalize.empty:
+                group_result_normalize.append(clustered_df_normalize)
+
+        return group_result, group_result_normalize
 
     # === Cas sans clustering ===
     interpolated_df = interpolate(df.copy(), gap_multiplier)
@@ -793,15 +863,13 @@ def pre_processed(
         final_window_size = window_size
         print(f"[WINDOW] Fenêtre utilisateur → {final_window_size}")
 
-    if normalize:
 
-        interpolated_df = normalization(
-            interpolated_df,
-            min_std=min_std,
-            min_valid_ratio=min_valid_ratio,
-            alpha=alpha,
-            window_size=final_window_size
-        )
+    interpolated_df_normalize = normalization(
+        interpolated_df,
+        min_std=min_std,
+        min_valid_ratio=min_valid_ratio,
+        alpha=alpha,
+        window_size=final_window_size
+    )
 
-
-    return interpolated_df
+    return interpolated_df, interpolated_df_normalize
