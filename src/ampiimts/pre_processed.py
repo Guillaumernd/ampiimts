@@ -14,117 +14,90 @@ import pandas as pd
 from numba import njit
 import faiss
 import time
+
 import random
 
+
 def synchronize_on_common_grid(
-    dfs: List[pd.DataFrame],
+    dfs_original: List[pd.DataFrame],
     gap_multiplier: float = 15,
-    sort_by_variables: bool = True,
-) -> List[pd.DataFrame]:
+    propagate_nan: bool = True,
+) -> pd.DataFrame:
     """
-    Synchronize multiple time series DataFrames on a common regular time grid.
-
-    Each input DataFrame is first interpolated independently
-    (using the provided `interpolate_func`, which should handle small gaps
-    and leave large gaps as NaN).
-    Then, all DataFrames are reindexed and time-interpolated on a shared
-    regular time axis computed from the median sampling interval across
-    all DataFrames.
-    This ensures perfect timestamp alignment for all DataFrames while
-    preserving large gaps as NaN.
-
-    Warnings are issued if the sampling intervals of the DataFrames differ
-    significantly.
-
-    Parameters
-    ----------
-    dfs : list of pd.DataFrame
-        List of DataFrames to synchronize. Each DataFrame must have a
-        DatetimeIndex.
-    interpolate_func : callable
-        Function to interpolate a single DataFrame. Must accept
-        (df, gap_multiplier) and return a DataFrame with gaps properly
-        handled (small gaps interpolated, large gaps as NaN).
-    gap_multiplier : float, default=15
-        Maximum gap (as a multiple of the base frequency) to interpolate
-        when calling `interpolate_func`. Larger gaps will remain as NaN.
-
-    Returns
-    -------
-    dfs_synced : list of pd.DataFrame
-        List of synchronized DataFrames, each reindexed and interpolated
-        on the same regular time grid (with identical DatetimeIndex),
-        ready for further analysis.
-
-    Notes
-    -----
-    - Large gaps (as defined by `gap_multiplier`) are preserved as NaN after
-      synchronization.
-    - Small discrepancies in start/end times or slight clock drifts are
-      handled by interpolation on the common grid.
-    - A warning is raised if the input DataFrames have significantly different
-      time intervals.
-
-    Example
-    -------
-    >>> synced = synchronize_on_common_grid
-        (dfs, interpolate_func=my_interpolate)
-    >>> # Now, synced[0].index == synced[1].index == ... for all dataframes
+    Synchronizes multiple time series DataFrames on a common timestamp grid
+    and returns a single multivariate DataFrame (columns renamed to avoid duplicates).
     """
+    # 1. Interpolation indépendante
     dfs = [
-            d.drop([c for c in ['latitude', 'longitude'] if c in d.columns], axis=1)
-            for d in dfs.copy()
-        ]
-    # Independent interpolation
-    dfs = [interpolate(df, gap_multiplier=gap_multiplier) for df in dfs]
-    # Sampling frequency for each DataFrame
-    freqs = [df.index.to_series().diff().median() for df in dfs]
-    freqs_seconds = [f.total_seconds() for f in freqs]
-    median_freq = np.median(freqs_seconds)
-    max_diff = max(abs(f - median_freq) for f in freqs_seconds)
-    if max_diff > 1.2 * median_freq:
-        warnings.warn(
-            f"[SYNC WARNING] Not all DataFrames have the same time step: "
-            f"Found steps (in seconds): {freqs_seconds} "
-            f"(median: {median_freq}s)"
-        )
-    common_freq = pd.to_timedelta(median_freq, unit="s")
-    min_time = min(df.index.min() for df in dfs)
-    max_time = max(df.index.max() for df in dfs)
-    reference_index = pd.date_range(
-        start=min_time, end=max_time, freq=common_freq)
-    # Reindex and interpolate on the same timestamp for all DataFrames
-    dfs_synced = [
-        df.reindex(
-            reference_index).interpolate(
-                method="time", limit_direction="both")
-        for df in dfs
+        interpolate(df, gap_multiplier=gap_multiplier, propagate_nan=propagate_nan)
+        for df in dfs_original
     ]
-    
-    # Ensure same numeric columns
-    numeric_cols = [sorted(d.select_dtypes(include=[np.number]).columns.tolist())
-                    for d in dfs_synced]
-    ref_cols = numeric_cols[0]
-    for idx, cols in enumerate(numeric_cols[1:], 1):
-        if cols != ref_cols:
-            raise ValueError(
-                f"DataFrame {idx} does not have the same numerical columns as DataFrame 0:\n"
-                f"Reference: {ref_cols}\nCurrent: {cols}"
-            )
-    # split per variable if requested
-    if sort_by_variables:
-        # build per-variable DataFrames
-        dataframes_by_var = []
-        for col_name in ref_cols:
-            var_frames = []
-            for i, d in enumerate(dfs_synced):
-                renamed = d[[col_name]].rename(columns={col_name: f"{col_name}_{i}"})
-                var_frames.append(renamed)
-            df_var = pd.concat(var_frames, axis=1)
-            df_var.index = dfs_synced[0].index
-            dataframes_by_var.append(df_var)
-        dfs_synced = dataframes_by_var
-    return dfs_synced
+    dfs = [df for df in dfs if not df.empty]
+
+    # 2. Calcul des fréquences de chaque DataFrame
+    freqs = [df.index.to_series().diff().median() for df in dfs]
+    freqs_seconds = [f.total_seconds() for f in freqs if pd.notna(f)]
+    median_freq = np.median(freqs_seconds)
+    common_freq = pd.to_timedelta(median_freq, unit="s")
+
+    # 3. Filtrer les DataFrames avec fréquence trop éloignée (> 20%)
+    allowed_diff = median_freq * 0.2
+    dfs_filtered = [
+        df for i, df in enumerate(dfs)
+        if abs(freqs_seconds[i] - median_freq) <= allowed_diff
+    ]
+    if len(dfs_filtered) < len(dfs):
+        print(f"[INFO] {len(dfs) - len(dfs_filtered)} DataFrame(s) ignoré(s) pour fréquence trop éloignée.")
+    dfs = dfs_filtered
+
+    if not dfs:
+        raise ValueError("Aucun DataFrame ne respecte la fréquence dominante.")
+
+    # 4. Vérifier si les index sont comparables (recouvrement temporel)
+    reference_ranges = [(df.index.min(), df.index.max()) for df in dfs]
+    time_overlaps = all(
+        abs((start - reference_ranges[0][0]).total_seconds()) < 30 and
+        abs((end - reference_ranges[0][1]).total_seconds()) < 30
+        for start, end in reference_ranges
+    )
+
+    if time_overlaps:
+        # Cas classique → on choisit le plus court pour base
+        durations = [(df.index.max() - df.index.min()).total_seconds() for df in dfs]
+        min_duration_idx = int(np.argmin(durations))
+        min_time = dfs[min_duration_idx].index.min()
+        max_time = dfs[min_duration_idx].index.max()
+        reference_index = pd.date_range(start=min_time, end=max_time, freq=common_freq)
+        print(f"[INFO] Using DataFrame #{min_duration_idx} to define reference time grid "
+              f"from {min_time} to {max_time} with frequency {common_freq}")
+    else:
+        # Pas de recouvrement suffisant → grille neutre
+        min_len = min(len(df) for df in dfs)
+        reference_index = pd.date_range(
+            start=pd.Timestamp("1970-01-01 00:00:00"),
+            periods=min_len,
+            freq=common_freq
+        )
+        print(f"[INFO] No aligned ranges → Using fresh index from 1970 with length {min_len} and frequency {common_freq}")
+
+    # 5. Reindex et interpolation (petits trous uniquement)
+    dfs_synced = []
+    for i, df in enumerate(dfs):
+        df_interp = df.interpolate(method="time", limit=2, limit_area="inside", limit_direction="both")
+        df_synced = df_interp.resample(common_freq).mean()
+        df_synced = df_synced.iloc[:len(reference_index)]
+        df_synced.index = reference_index
+        dfs_synced.append(df_synced)
+
+    # 6. Concaténation multivariée avec renommage
+    renamed_dfs = [df.add_suffix(f"_{i}") for i, df in enumerate(dfs_synced)]
+    df_combined = pd.concat(renamed_dfs, axis=1)
+    df_combined.index.name = "timestamp"
+
+    return df_combined
+
+
+
 
 def interpolate(
     df_origine: pd.DataFrame,
@@ -171,7 +144,7 @@ def interpolate(
     new_nan_mask = df.isna() & ~original_nan_mask
 
     # Supprimer les colonnes avec trop de NaN après suppression des plateaux
-    min_valid_points_plateaux = int(len(df) * 0.9)
+    min_valid_points_plateaux = int(len(df) * 0.5)
     df = df.dropna(axis=1, thresh=min_valid_points_plateaux)
 
     # Ne garder que les colonnes restantes dans le masque
@@ -280,33 +253,39 @@ def interpolate(
             ts_nan = df.index[mask]
             ts_nan = [ts for ts in ts_nan if ts in df_out.index]
             df_out.loc[ts_nan, col] = np.nan
-
     # Réinjecter les NaN des plateaux incohérents
+    new_nan_mask = new_nan_mask.reindex(df.index)
+
     if propagate_nan:
         plateau_nan_locs = []
-        new_nan_mask = new_nan_mask.reindex(df.index)
         for col in new_nan_mask.columns:
             if col == "timestamp":
-                continue 
-            mask = df[col].copy()
-            mask = mask.fillna(False)
-            mask = mask.infer_objects(copy=False)
-            mask = mask.astype(bool)
-            plateau_nan_locs.extend(df.index[mask])
+                continue
+            mask = new_nan_mask[col]
+            if mask.dtype != bool:
+                mask = mask.astype("boolean").fillna(False)
+                mask = mask.fillna(False)
+                mask = mask.fillna(False)
+                mask = mask.astype(bool)
+            plateau_nan_locs.extend(mask[mask].index)
         plateau_nan_locs = sorted(set(ts for ts in plateau_nan_locs if ts in df_out.index))
         df_out.loc[plateau_nan_locs, :] = np.nan
     else:
-        new_nan_mask = new_nan_mask.reindex(df.index)
         for col in new_nan_mask.columns:
             if col == "timestamp":
-                continue 
-            mask = df[col].copy()
-            mask = mask.fillna(False)
-            mask = mask.infer_objects(copy=False)
-            mask = mask.astype(bool)
-            ts_nan = df.index[mask]
+                continue
+            mask = new_nan_mask[col]
+            if mask.dtype != bool:
+                mask = mask.astype("boolean").fillna(False)
+                mask = mask.fillna(False)
+                mask = mask.astype(bool)
+            ts_nan = mask[mask].index
             ts_nan = [ts for ts in ts_nan if ts in df_out.index]
             df_out.loc[ts_nan, col] = np.nan
+
+    min_valid_ratio = 0.50
+    min_valid_points = int(len(df_out) * min_valid_ratio)
+    df_out = df_out.dropna(axis=1, thresh=min_valid_points)
     return df_out
 
 
@@ -451,7 +430,7 @@ def normalization(
         total_windows = len(series) - window_size + 1
         ratio = valid_windows / max(1, total_windows)
 
-        print(f"[CHECK] {series.name} : {valid_windows} fenêtres valides ({ratio:.1%})")
+        # print(f"[CHECK] {series.name} : {valid_windows} fenêtres valides ({ratio:.1%})")
 
         return True if ratio >= min_ratio else False
 
@@ -488,6 +467,7 @@ def define_m_using_clustering(
         pts_candidates = np.unique(
             np.round(np.logspace(np.log10(2), np.log10(max_pts), num=n_candidates)).astype(int)
         )
+
         window_sizes = [str(p * freq) for p in pts_candidates]
 
     window_sizes_pts = []
@@ -508,6 +488,8 @@ def define_m_using_clustering(
         df = df.iloc[idx]
 
     def eval_window(values: np.ndarray, ws_pts: int, ws_str: str):
+        if len(values) < ws_pts or ws_pts >= len(values):
+            return None
         try:
             segs = np.lib.stride_tricks.sliding_window_view(values, ws_pts)
         except ValueError:
@@ -596,7 +578,7 @@ import re
 def cluster_dimensions(
     df: Union[pd.DataFrame, List[pd.DataFrame]],
     group_size: int = 5,
-    top_k: int = 5,
+    top_k: int = 4,
     min_std: float = 1e-2,
     min_valid_ratio: float = 0.8,
     min_cluster_size: int = 2,
@@ -741,6 +723,7 @@ def pre_processed(
     sort_by_variables: bool = True,
     cluster: bool = False,
     normalize: bool = True,
+    top_k_cluster: int = 4,
 ) -> Union[pd.DataFrame, List[pd.DataFrame], List[List[pd.DataFrame]]]:
     """
     Full preprocessing pipeline for one or several DataFrames.
@@ -754,62 +737,62 @@ def pre_processed(
 
     # === Cas d'une liste de DataFrames ===
     if isinstance(df, list):
-        synced_dfs = synchronize_on_common_grid(df, sort_by_variables=sort_by_variables)
 
         if cluster:
-            clustered_groups = cluster_dimensions(synced_dfs)
+            synced_dfs = synchronize_on_common_grid(df, propagate_nan=False)
+            clustered_groups = cluster_dimensions(synced_dfs, top_k=top_k_cluster)
             cluster_outputs = []
+            group_result_normalize = []
+            group_result = []
 
-            for group in sorted(clustered_groups, reverse=True):
-                group_result = []
-
-                for clustered_df in group:
-                    if window_size is None:
-                        win_list = define_m_using_clustering(clustered_df)
-                        final_window_size = win_list[0][1]
-                        print(f"[WINDOW LIST - Cluster] Fenêtre → {final_window_size}")
-                    else:
-                        final_window_size = window_size
-                        print(f"[WINDOW LIST - Cluster] Fenêtre utilisateur → {final_window_size}")
-
-                    if normalize:
-                        clustered_df = normalization(
-                            clustered_df,
-                            min_std=min_std,
-                            min_valid_ratio=min_valid_ratio,
-                            alpha=alpha,
-                            window_size=final_window_size
-                        )
+            for col_names in sorted(clustered_groups, reverse=True):
+                cluster_df = synced_dfs.reset_index()[col_names].copy()
+                clustered_df = interpolate(cluster_df, gap_multiplier=gap_multiplier)
+                if clustered_df.empty:
+                    continue
+                if window_size is None:
+                    win_list = define_m_using_clustering(clustered_df)
+                    final_window_size = win_list[0][1]
+                    print(f"[WINDOW LIST - Cluster] Fenêtre → {final_window_size}")
+                else:
+                    final_window_size = window_size
+                    print(f"[WINDOW LIST - Cluster] Fenêtre utilisateur → {final_window_size}")
+                     
+                if clustered_df is not None and not clustered_df.empty:
                     group_result.append(clustered_df)
+                clustered_df_normalize = normalization(
+                    clustered_df,
+                    min_std=min_std,
+                    min_valid_ratio=min_valid_ratio,
+                    alpha=alpha,
+                    window_size=final_window_size
+                )
+                           
+                if clustered_df_normalize is not None and not clustered_df_normalize.empty:
+                    group_result_normalize.append(clustered_df_normalize)
 
-                # Garder seulement les groupes complets
-                group_result = [df_ for df_ in group_result if df_ is not None and not df_.empty]
-                if len(group_result) == len(group):
-                    cluster_outputs.extend(group_result)  # ✅ Ajoute chaque cluster individuellement
+            return group_result, group_result_normalize
 
-            return cluster_outputs
+        df_interpolate = synchronize_on_common_grid(df, propagate_nan=True)
 
+        if window_size is None:
+            win_list = define_m_using_clustering(df_interpolate)
+            final_window_size = win_list[0][1]
+            print(f"[WINDOW LIST] Fenêtre retenue → {final_window_size}")
         else:
-            if window_size is None:
-                win_list = define_m_using_clustering(synced_dfs[0])
-                final_window_size = win_list[0][1]
-                print(f"[WINDOW LIST] Fenêtre retenue → {final_window_size}")
-            else:
-                final_window_size = window_size
-                print(f"[WINDOW LIST] Fenêtre utilisateur → {final_window_size}")
+            final_window_size = window_size
+            print(f"[WINDOW LIST] Fenêtre utilisateur → {final_window_size}")
 
-            if normalize:
-                return [
-                    normalization(
-                        df_single,
-                        min_std=min_std,
-                        min_valid_ratio=min_valid_ratio,
-                        alpha=alpha,
-                        window_size=final_window_size
-                    ) for df_single in synced_dfs
-                ]
-            else:
-                return synced_dfs
+    
+        df_normalize = normalization(
+            df_single,
+            min_std=min_std,
+            min_valid_ratio=min_valid_ratio,
+            alpha=alpha,
+            window_size=final_window_size
+        )
+
+        return df_interpolate, df_normalize
 
     if cluster:
 
@@ -817,7 +800,7 @@ def pre_processed(
         interpolated_df = interpolate(df.copy(), gap_multiplier=gap_multiplier, propagate_nan=False)
 
         # 2. Étape : clustering → tu récupères les noms de colonnes de chaque cluster
-        clusters = cluster_dimensions(interpolated_df)
+        clusters = cluster_dimensions(interpolated_df, top_k=top_k_cluster)
 
         cluster_outputs = []
         group_result = []
@@ -828,6 +811,8 @@ def pre_processed(
             cluster_df = df[col_names].copy()
 
             clustered_df = interpolate(cluster_df, gap_multiplier=gap_multiplier)
+            if clustered_df.empty:
+                    continue
             if window_size is None:
                 win_list = define_m_using_clustering(clustered_df)
                 final_window_size = win_list[0][1]
