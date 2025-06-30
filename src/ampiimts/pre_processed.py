@@ -98,6 +98,30 @@ def synchronize_on_common_grid(
 
 
 
+def remove_linear_columns(df: pd.DataFrame, r2_threshold: float = 0.985) -> pd.DataFrame:
+    """Remove numeric columns that are approximately linear.
+
+    A column is considered linear if a first-degree polynomial fitted on its
+    non-NaN values explains more than ``r2_threshold`` of the variance.
+    """
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    to_drop = []
+    for col in numeric_cols:
+        series = df[col].dropna()
+        if len(series) < 3:
+            continue
+        x = np.arange(len(series))
+        slope, intercept = np.polyfit(x, series.values, 1)
+        fit = slope * x + intercept
+        ss_res = np.sum((series.values - fit) ** 2)
+        ss_tot = np.sum((series.values - series.values.mean()) ** 2)
+        r2 = 1.0 if ss_tot == 0 else 1 - ss_res / ss_tot
+        if r2 >= r2_threshold:
+            to_drop.append(col)
+    if to_drop and len(numeric_cols) > len(to_drop):
+        df = df.drop(columns=to_drop)
+    return df
+
 
 def interpolate(
     df_origine: pd.DataFrame,
@@ -286,6 +310,7 @@ def interpolate(
     min_valid_ratio = 0.50
     min_valid_points = int(len(df_out) * min_valid_ratio)
     df_out = df_out.dropna(axis=1, thresh=min_valid_points)
+    df_out = remove_linear_columns(df_out)
     return df_out
 
 
