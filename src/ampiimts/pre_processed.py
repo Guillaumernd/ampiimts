@@ -1,6 +1,6 @@
 """Preprocessed module for panda DataFrame with timestamp column."""
 from typing import Union, List
-from collections import Counter
+from collections import Counter, defaultdict
 from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
 from sklearn.cluster import KMeans
@@ -14,7 +14,7 @@ import pandas as pd
 from numba import njit
 import faiss
 import time
-
+import re
 import random
 
 
@@ -604,13 +604,6 @@ def define_m_using_clustering(
     aggregated.sort(key=lambda x: x[2])
     final = aggregated[:k]
     return final
-
-from typing import Union, List
-import pandas as pd
-import numpy as np
-from sklearn.cluster import AgglomerativeClustering
-from collections import defaultdict
-import re
 
 def cluster_dimensions(
     df: Union[pd.DataFrame, List[pd.DataFrame]],

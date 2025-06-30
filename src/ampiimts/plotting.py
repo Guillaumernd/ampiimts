@@ -109,28 +109,28 @@ def plot_patterns_and_discords(df, result, column='value', figsize=(12, 6)):
 
 def plot_multidim_patterns_and_discords(df, result, tick_step=500):
     """
-    Affiche :
-      • chaque dimension de la série multivariée
-      • les motifs (zones colorées seulement sur les dimensions actives)
-      • les discords (traits rouges)
-      • la heat-map du Matrix Profile
-    
+    Plot:
+      • Each dimension of the multivariate signal
+      • Motifs (colored spans only on active dimensions)
+      • Discords (red vertical lines)
+      • A separate heatmap of the Matrix Profile
+
     Parameters
     ----------
-    df : pandas.DataFrame
-        Time-series multivariée indexée par dates.
+    df : pd.DataFrame
+        Time-indexed multivariate signal.
     result : dict
-        Sortie de discover_patterns_mstump_mixed :
+        Output from discover_patterns_mstump_mixed:
             - "matrix_profile"  : DataFrame (len=n−m+1 × n_dim), index DatetimeIndex
             - "window_size"     : int
             - "discord_indices" : list
-            - "patterns"        : list de dicts
-            - "motif_subspaces" : list[np.ndarray[bool]] (facultatif)
+            - "patterns"        : list of dicts
+            - "motif_subspaces" : list[np.ndarray[bool]] (optional)
     tick_step : int
-        Pas pour les ticks (inutile si AutoDateLocator utilisé).
+        Tick step for X axis (unused if AutoDateLocator is used).
     """
     if result is None:
-        print("[INFO] Aucune donnée de matrix profile : seuls les signaux seront affichés.")
+        print("[INFO] No matrix profile data: only raw signals will be shown.")
         fig, axs = plt.subplots(
             df.shape[1], 1,
             figsize=(20, 1.5 * df.shape[1]),
@@ -151,41 +151,22 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
         plt.show()
         return
 
-    # --- 0) Récupérations --------------------------------------------
-    profile_df   = result["matrix_profile"]             # (n-m+1) × n_dim
-    mp           = profile_df.values.T                  # (n_dim, prof_len)
+    # --- Extract from result dict ---
+    profile_df   = result["matrix_profile"]
+    mp           = profile_df.values.T
     center_dates = profile_df.index.to_pydatetime()
     window_size  = result["window_size"]
     discords     = result.get("discord_indices", [])
     patterns     = result.get("patterns", [])
     subspaces    = result.get("motif_subspaces", [None] * len(patterns))
     original_cols = [col.replace("mp_dim_", "") for col in profile_df.columns]
-    df = df.loc[:, original_cols]  
+    df = df.loc[:, original_cols]  # align order
 
     n_dim, prof_len = mp.shape
-    figsize = (20, 1.5 * (n_dim + 1))
-
-    # --- 1) Préparation des bords X pour la heat-map ------------------
-    dnums = mdates.date2num(center_dates)
-    diffs = np.diff(dnums)
-    xedges = np.empty(prof_len + 1)
-    xedges[1:-1] = dnums[:-1] + diffs / 2
-    xedges[0]    = dnums[0] - diffs[0] / 2
-    xedges[-1]   = dnums[-1] + diffs[-1] / 2
-    yedges = np.arange(n_dim + 1)
-
-    # --- 2) Création figure + axes -----------------------------------
-    fig, axs = plt.subplots(
-        n_dim + 1, 1,
-        figsize=(figsize[0], figsize[1] * (1 + 0.2 * n_dim)),
-        sharex=True,
-        gridspec_kw={"height_ratios": [1] * n_dim + [0.7]},
-    )
-
     motif_colors = ["tab:green", "tab:purple", "tab:blue", "tab:orange",
                     "tab:brown", "tab:pink", "tab:gray", "tab:olive"]
 
-    # Pré-compute : pour chaque motif, la liste des dimensions actives
+    # Precompute active dimensions per motif
     pattern_dims = []
     for sp in subspaces:
         if sp is None:
@@ -193,20 +174,24 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
         else:
             pattern_dims.append(set(np.where(np.atleast_1d(sp))[0]))
 
-    # --- 3) Tracé des séries, motifs et discords ---------------------
+    # === FIGURE 1: Timeseries Plots ============================================
+    fig1, axs = plt.subplots(
+        n_dim, 1,
+        figsize=(20, n_dim * 1),
+        sharex=True,
+    )
+    if n_dim == 1:
+        axs = [axs]
+
     for dim, col in enumerate(df.columns):
         ax = axs[dim]
-        
-        # ➤ 1. Tracé du signal
         ax.plot(df.index, df[col], color="black", label=col, linewidth=0.8)
 
-        # ➤ 2. Tracé du Matrix Profile rescalé à la courbe
+        # Rescale MP to data range
         mp_series = mp[dim]
         mp_series = np.where(np.isinf(mp_series), np.nan, mp_series)
-
         valid = ~np.isnan(mp_series)
-
-        mp_rescaled = np.full_like(mp_series, np.nan)  # même forme, NaN par défaut
+        mp_rescaled = np.full_like(mp_series, np.nan)
 
         if valid.any():
             mp_min = np.nanmin(mp_series)
@@ -215,60 +200,59 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
             if denom > 0:
                 mp_rescaled[valid] = (mp_series[valid] - mp_min) / denom
             else:
-                mp_rescaled[valid] = 0  
+                mp_rescaled[valid] = 0
 
-        mp_rescaled = mp_rescaled * (df[col].max() - df[col].min()) + df[col].min()
-        ax.plot(center_dates, mp_rescaled, color="blue", alpha=0.8, label="Matrix Profile")
+            mp_rescaled = mp_rescaled * (df[col].max() - df[col].min()) + df[col].min()
+            ax.plot(center_dates, mp_rescaled, color="blue", alpha=0.8, label="Matrix Profile")
 
-
-        # motifs (axvspan uniquement si la dimension est active)
+        # Motifs
         for pat_id, pat in enumerate(patterns):
             c = motif_colors[pat_id % len(motif_colors)]
             if dim not in pattern_dims[pat_id]:
-                continue  # dimension non pertinente pour ce motif
+                continue
             for j, s in enumerate(pat["motif_indices_debut"]):
                 if s < 0 or s + window_size >= len(df):
-                    continue  # évite un dépassement d'index
+                    continue
                 e = s + window_size
-                ax.axvspan(
-                    df.index[s], df.index[e],
-                    color=c,
-                    alpha=0.25,
-                    label=(pat["pattern_label"] if (j == 0 and dim == 0) else None),
-                )
+                ax.axvspan(df.index[s], df.index[e], color=c, alpha=0.25,
+                           label=(pat["pattern_label"] if j == 0 and dim == 0 else None))
 
-
-        # discords (traits verticaux rouges)
-        for d in discords:
-            ax.axvline(df.index[d], color="red", linestyle="--", alpha=0.25, linewidth=0.8)
+        # Discords
+        for j, d in enumerate(discords):
+            ax.axvline(df.index[d], color="red", linestyle="--", alpha=0.8, linewidth=0.5,
+                       label="Discord" if j == 0 else None)
 
         ax.set_ylabel(col)
         ax.grid(True, linewidth=0.3, alpha=0.6)
-
-        # mise en forme de l'axe X
+        ax.legend(loc="upper right", fontsize="x-small")
         ax.xaxis.set_major_locator(mdates.AutoDateLocator())
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
         ax.tick_params(axis="x", rotation=45, labelsize="small")
-        ax.legend(loc="upper right", fontsize="x-small")
 
-    # --- 4) Heat-map du Matrix Profile -------------------------------
-    axh = axs[-1]
+    axs[-1].set_xlabel("Date")
+    fig1.tight_layout()
+    plt.show()
+
+    # === FIGURE 2: Heatmap Only ===============================================
+    dnums = mdates.date2num(center_dates)
+    diffs = np.diff(dnums)
+    xedges = np.empty(prof_len + 1)
+    xedges[1:-1] = dnums[:-1] + diffs / 2
+    xedges[0] = dnums[0] - diffs[0] / 2
+    xedges[-1] = dnums[-1] + diffs[-1] / 2
+    yedges = np.linspace(0, n_dim, n_dim + 1)
+
+    fig2, axh = plt.subplots(1, 1, figsize=(20, 0.25 * n_dim))  # 0.25 à 0.35 est une bonne base
     cmap = plt.cm.viridis.copy()
     cmap.set_bad("white")
 
-    mesh = axh.pcolormesh(
-        xedges, yedges, mp,
-        cmap=cmap,
-        shading="auto",
-    )
-    fig.colorbar(mesh, ax=axh, label="Matrix Profile")
+    mesh = axh.pcolormesh(xedges, yedges, mp, cmap=cmap, shading="auto")
+    fig2.colorbar(mesh, ax=axh, label="Matrix Profile")
 
-    # Redessiner discords sur la heat-map
     for d in discords:
         xd = mdates.date2num(df.index[d])
-        axh.axvline(xd, color="red", linestyle="--", alpha=0.3, linewidth=0.15)
+        axh.axvline(xd, color="red", linestyle="--", alpha=0.8, linewidth=1)
 
-    # Redessiner motifs (rectangles) mais uniquement sur les dims actives
     for pat_id, pat in enumerate(patterns):
         c = motif_colors[pat_id % len(motif_colors)]
         active_dims = pattern_dims[pat_id]
@@ -280,17 +264,11 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
             x0 = mdates.date2num(df.index[s])
             x1 = mdates.date2num(df.index[s + window_size])
             rect = plt.Rectangle(
-                (x0, ymin),
-                x1 - x0,
-                ymax - ymin,
-                edgecolor=c,
-                facecolor="none",
-                linewidth=1.2,
-                alpha=0.8,
+                (x0, ymin), x1 - x0, ymax - ymin,
+                edgecolor=c, facecolor="none", linewidth=1.2, alpha=0.8
             )
             axh.add_patch(rect)
 
-    # --- 5) Mise en forme finale -------------------------------------
     axh.set_xlim(df.index[0], df.index[-1])
     axh.set_xlabel("Date")
     axh.set_ylabel("Dimension")
@@ -298,8 +276,9 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
     axh.set_yticklabels(df.columns)
     axh.set_title("Multi-dimensional Matrix Profile")
 
-    plt.tight_layout()
+    fig2.tight_layout()
     plt.show()
+
 
 def plot_motif_overlays(df, result, normalize=False):
     """
