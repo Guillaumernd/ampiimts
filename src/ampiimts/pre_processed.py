@@ -1,4 +1,4 @@
-"""Preprocessed module for panda DataFrame with timestamp column."""
+"""Utility functions for preprocessing time series DataFrames."""
 from typing import Union, List
 from collections import Counter, defaultdict
 from scipy.cluster.hierarchy import linkage, fcluster
@@ -28,37 +28,37 @@ def synchronize_on_common_grid(
     and returns a single multivariate DataFrame (columns renamed to avoid duplicates).
     """
 
-    # 1. Interpolation indépendante
+    # 1. Independent interpolation of each DataFrame
     dfs = [
         interpolate(df, gap_multiplier=gap_multiplier, propagate_nan=propagate_nan)
         for df in dfs_original
     ]
     dfs = [df for df in dfs if not df.empty]
 
-    # 2. Calcul des fréquences
+    # 2. Compute sampling frequencies
     freqs = [df.index.to_series().diff().median() for df in dfs]
     freqs_seconds = [f.total_seconds() for f in freqs if pd.notna(f)]
     median_freq = np.median(freqs_seconds)
     common_freq = pd.to_timedelta(median_freq, unit="s")
 
-    # 3. Filtrer les DataFrames trop éloignés de la fréquence médiane
+    # 3. Drop DataFrames far from the median frequency
     allowed_diff = median_freq * 0.2
     dfs_filtered = [
         df for i, df in enumerate(dfs)
         if abs(freqs_seconds[i] - median_freq) <= allowed_diff
     ]
     if len(dfs_filtered) < len(dfs):
-        print(f"[INFO] {len(dfs) - len(dfs_filtered)} DataFrame(s) ignoré(s) pour fréquence trop éloignée.")
+        print(f"[INFO] {len(dfs) - len(dfs_filtered)} DataFrame(s) skipped due to distant frequency")
     dfs = dfs_filtered
 
     if not dfs:
-        raise ValueError("Aucun DataFrame ne respecte la fréquence dominante.")
+        raise ValueError("No DataFrame matches the dominant frequency")
 
-    # 4. Vérifier si les plages temporelles sont proches (< 10% durée totale)
+    # 4. Check if time ranges are aligned (<10% total duration)
     reference_ranges = [(df.index.min(), df.index.max()) for df in dfs]
     ref_start, ref_end = reference_ranges[0]
     total_duration = (ref_end - ref_start).total_seconds()
-    allowed_shift = total_duration * 0.10  # 10% de la durée
+    allowed_shift = total_duration * 0.10  # 10% of duration
 
     time_overlaps = all(
         abs((start - ref_start).total_seconds()) <= allowed_shift and
@@ -67,7 +67,7 @@ def synchronize_on_common_grid(
     )
 
     if time_overlaps:
-        # Grille temporelle basée sur la plus courte série
+        # Time grid based on the shortest series
         durations = [(end - start).total_seconds() for start, end in reference_ranges]
         min_idx = int(np.argmin(durations))
         min_time = dfs[min_idx].index.min()
@@ -76,7 +76,7 @@ def synchronize_on_common_grid(
         print(f"[INFO] Using aligned time grid from {min_time} to {max_time} "
               f"with freq {common_freq} based on DataFrame #{min_idx}")
     else:
-        # Grille neutre depuis 1970
+        # Neutral grid starting in 1970
         min_len = min(len(df) for df in dfs)
         reference_index = pd.date_range(
             start=pd.Timestamp("1970-01-01 00:00:00"),
@@ -86,7 +86,7 @@ def synchronize_on_common_grid(
         print(f"[INFO] No aligned ranges → Using fresh index from 1970 "
               f"with length {min_len} and frequency {common_freq}")
 
-    # 5. Reindexation et resampling sur la grille commune
+    # 5. Reindex and resample on the common grid
     dfs_synced = []
     for i, df in enumerate(dfs):
         df_interp = df.interpolate(method="time", limit=2, limit_area="inside", limit_direction="both")
@@ -95,7 +95,7 @@ def synchronize_on_common_grid(
         df_synced.index = reference_index
         dfs_synced.append(df_synced)
 
-    # 6. Concaténation multivariée
+    # 6. Concatenate all series
     renamed_dfs = [df.add_suffix(f"_{i}") for i, df in enumerate(dfs_synced)]
     df_combined = pd.concat(renamed_dfs, axis=1)
     df_combined.index.name = "timestamp"
@@ -130,14 +130,28 @@ def remove_linear_columns(df: pd.DataFrame, r2_threshold: float = 0.985) -> pd.D
 
 
 def interpolate(
-    df_origine: pd.DataFrame,
+    df_original: pd.DataFrame,
     gap_multiplier: float = 15,
     column_thresholds: dict = None,
     propagate_nan: bool = True,
 ) -> pd.DataFrame:
-    df = df_origine.copy()
+    df = df_original.copy()
     
     def remove_plateau_values_globally(df: pd.DataFrame, min_duration=5) -> pd.DataFrame:
+        """Replace long constant plateaus by NaN for all numeric columns.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Input DataFrame.
+        min_duration : int, optional
+            Minimum length of a constant run to be considered a plateau.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with plateaus replaced by ``NaN``.
+        """
         df = df.copy()
         for col in df.select_dtypes(include=[np.number]).columns:
             s = df[col]
@@ -164,34 +178,31 @@ def interpolate(
                 df.loc[mask, col] = np.nan
         return df
 
-    # Supprimer les colonnes non numériques sauf "timestamp"
-    non_numeric_cols = df.select_dtypes(exclude=["number"]).columns
-    non_numeric_cols = [col for col in non_numeric_cols if col != "timestamp"]
-    df = df.drop(columns=non_numeric_cols)
+    # Preserve non-numeric columns except for an explicit timestamp column
 
-    # Sauvegarder les NaN d'origine
+    # Save original NaN positions
     original_nan_mask = df.isna()
 
-    # Appliquer le nettoyage par plateaux
+    # Apply plateau cleaning
     df = remove_plateau_values_globally(df)
 
-    # Identifier les NaN ajoutés par les plateaux incohérents
+    # Identify NaN introduced by plateau removal
     new_nan_mask = df.isna() & ~original_nan_mask
 
-    # Supprimer les colonnes avec trop de NaN après suppression des plateaux
+    # Drop columns with too many NaN after plateau removal
     min_valid_points_plateaux = int(len(df) * 0.5)
     df = df.dropna(axis=1, thresh=min_valid_points_plateaux)
 
-    # Ne garder que les colonnes restantes dans le masque
+    # Keep only remaining columns in the mask
     new_nan_mask = new_nan_mask[df.columns]
 
-    # Nettoyage index
-   # Si une colonne "timestamp" est présente, on l'utilise comme index
+    # Index cleaning
+   # Use "timestamp" column as index if present otherwise rely on existing index
     if "timestamp" in df.columns:
-        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-        df = df.set_index("timestamp")
+        df.index = pd.to_datetime(df["timestamp"], errors="coerce")
+        df = df.drop(columns=["timestamp"])
     else:
-        raise ValueError("La colonne 'timestamp' est requise pour l'interpolation.")
+        df.index = pd.to_datetime(df.index, errors="coerce")
 
     df.index = df.index.tz_localize(None)
     df = df[df.index.notna()]
@@ -200,6 +211,7 @@ def interpolate(
 
     # Seuils automatiques
     def estimate_column_thresholds(data: pd.DataFrame) -> dict:
+        """Estimate outlier detection thresholds for each numeric column."""
         thresholds = {}
         for col in data.select_dtypes(include=[np.number]).columns:
             top_mean = data[col].nlargest(int(len(data) * 0.15)).mean()
@@ -210,7 +222,7 @@ def interpolate(
     if column_thresholds is None:
         column_thresholds = estimate_column_thresholds(df)
 
-    # Outliers extrêmes
+    # Extreme outliers
     outlier_timestamps = set()
     for col in df.select_dtypes(include=[np.number]).columns:
         series = df[col]
@@ -219,12 +231,12 @@ def interpolate(
         mask = np.abs(series - center) > threshold
         outlier_timestamps.update(df.index[mask])
 
-    # Nettoyage outliers
+    # Remove outliers
     df_wo_outliers = df.drop(index=outlier_timestamps)
     min_valid_points = int(len(df_wo_outliers) * 0.9)
     df_wo_outliers = df_wo_outliers.dropna(axis=1, thresh=min_valid_points)
 
-    # Fréquence
+    # Frequency
     idx = df_wo_outliers.index.unique().sort_values()
     if len(idx) < 2:
         raise ValueError("Not enough points to estimate frequency.")
@@ -247,7 +259,7 @@ def interpolate(
 
     max_gap = freq * gap_multiplier
 
-    # Rééchantillonnage
+    # Resampling
     full_idx = pd.date_range(start=idx.min(), end=idx.max(), freq=freq)
     union_idx = idx.union(full_idx)
     df_union = df_wo_outliers.reindex(union_idx)
@@ -265,7 +277,7 @@ def interpolate(
     df_out = df_interp.reindex(full_idx)
     df_out.index.name = "timestamp"
 
-    # Grandes coupures = NaN
+    # Large gaps become NaN
     gap_mask = pd.Series(False, index=df_out.index)
     for prev, nxt in zip(idx[:-1], idx[1:]):
         if nxt - prev > max_gap:
@@ -273,7 +285,7 @@ def interpolate(
             gap_mask |= in_gap
     df_out.loc[gap_mask, :] = np.nan
 
-    # Réinjecter les NaN des outliers
+    # Reinsert NaNs from outliers
     if propagate_nan:
         outlier_idx = sorted(ts for ts in outlier_timestamps if ts in df_out.index)
         df_out.loc[outlier_idx, :] = np.nan
@@ -289,7 +301,7 @@ def interpolate(
             ts_nan = df.index[mask]
             ts_nan = [ts for ts in ts_nan if ts in df_out.index]
             df_out.loc[ts_nan, col] = np.nan
-    # Réinjecter les NaN des plateaux incohérents
+    # Reinsert NaNs from inconsistent plateaus
     new_nan_mask = new_nan_mask.reindex(df.index)
 
     if propagate_nan:
@@ -447,35 +459,33 @@ def normalization(
             df[col] = aswn_with_trend(
                 df[col], window_size, min_std, min_valid_ratio, alpha
             )
-            df[col] = df[col].interpolate(method="linear", limit=3, limit_direction="both")
+            # Preserve gaps; do not interpolate after normalization
 
     df.attrs["m"] = window_size
-    df = df.loc[:, df.notna().sum() >= window_size]  # Au moins la taille d'une fenêtre
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     any_nan_mask = df.isna().any(axis=1)
     df.loc[any_nan_mask] = np.nan
     def has_enough_valid_windows(series, window_size, min_ratio):
+        """Return True if a series has a sufficient ratio of valid windows."""
         if len(series) < window_size:
-            return False
+            return True
 
-        # Calcule combien de valeurs valides dans chaque fenêtre
+        # Count how many valid values in each window
         valid_counts = series.rolling(window_size).count()
 
-        # Une fenêtre est valide si elle a exactement window_size valeurs non-NaN
+        # A window is valid if it has exactly ``window_size`` non-NaN values
         valid_windows = (valid_counts == window_size).sum()
 
         total_windows = len(series) - window_size + 1
         ratio = valid_windows / max(1, total_windows)
 
-        # print(f"[CHECK] {series.name} : {valid_windows} fenêtres valides ({ratio:.1%})")
+        # print(f"[CHECK] {series.name} : {valid_windows} valid windows ({ratio:.1%})")
 
         return True if ratio >= min_ratio else False
 
     if not has_enough_valid_windows(df[df.columns[0]], window_size, 0.1):
-        print("[INFO] Aucune dimension avec suffisamment de fenêtres valides. → retour None")
-        return None
-    else:
-        return df
+        print("[INFO] No dimension has enough valid windows → returning input as is")
+    return df
 
 
 
@@ -489,10 +499,9 @@ def define_m_using_clustering(
     n_jobs: int = 8,
 ) -> list[tuple[int, str, float, float]]:
     """
-    Détermine les meilleures tailles de fenêtre pour l'extraction de motifs
-    en se basant sur la stabilité et la densité de clusters via FAISS.
-
-    Cette version intègre un échantillonnage intelligent des fenêtres par variance.
+    Determine suitable window sizes for motif extraction based on cluster
+    stability and density using FAISS. This version performs variance based
+    sampling of candidate windows.
     """
     freq = df.index.to_series().diff().median()
     if pd.isna(freq) or freq <= pd.Timedelta(0):
@@ -525,6 +534,7 @@ def define_m_using_clustering(
         df = df.iloc[idx]
 
     def eval_window(values: np.ndarray, ws_pts: int, ws_str: str):
+        """Evaluate a candidate window size for clustering stability."""
         if len(values) < ws_pts or ws_pts >= len(values):
             return None
         try:
@@ -534,11 +544,11 @@ def define_m_using_clustering(
         if segs.shape[0] < 2:
             return None
 
-        # Échantillonnage intelligent par variance
+        # Smart sampling by variance
         valid_counts = np.sum(~np.isnan(segs), axis=1)
         segs = segs[valid_counts >= 2]
         seg_var = np.nanstd(segs, axis=1, ddof=0)
-        idx_sorted = np.argsort(-seg_var)  # décroissant
+        idx_sorted = np.argsort(-seg_var)  # descending
         if len(idx_sorted) > max_segments:
             segs = segs[idx_sorted[:max_segments]]
         else:
@@ -615,12 +625,14 @@ def cluster_dimensions(
     mode: str = 'hybrid'  # 'motif', 'discord', 'hybrid'
 ) -> List[List[str]]:
     """
-    Cluster les dimensions d’un DataFrame selon leur cohérence temporelle.
-    Trois modes : 'motif' (groupes homogènes), 'discord' (groupes variés),
-    ou 'hybrid' (groupes complémentaires).
-    Affiche aussi :
-      - La corrélation moyenne entre clusters et le reste des colonnes
-      - La corrélation moyenne entre familles de capteurs (par nom)
+    Cluster DataFrame dimensions based on temporal coherence.
+    Modes:
+        - ``motif``   : homogeneous groups
+        - ``discord`` : heterogeneous groups
+        - ``hybrid``  : complementary groups
+    The function also displays:
+        - Average correlation between clusters and remaining columns
+        - Average correlation between sensor families (by name)
     """
 
     if isinstance(df, pd.DataFrame):
@@ -645,10 +657,10 @@ def cluster_dimensions(
         if len(valid_cols) < 2:
             continue
 
-        # Matrice de corrélation
+        # Correlation matrix
         corr = base_df[valid_cols].corr()
 
-        # Distance en fonction du mode choisi
+        # Distance depending on the chosen mode
         if mode == 'motif':
             dist = 1 - corr.pow(2).abs()
         elif mode == 'discord':
@@ -658,13 +670,13 @@ def cluster_dimensions(
 
         dist = dist.fillna(1.0)
 
-        # Distance moyenne pour seuil dynamique
+        # Mean distance used for dynamic threshold
         tril_values = dist.where(np.tril(np.ones(dist.shape), -1).astype(bool)).stack()
         mean_dist = tril_values.mean()
         std_dist = tril_values.std()
         distance_threshold = mean_dist - 0.5 * std_dist
 
-        # Clustering hiérarchique
+        # Hierarchical clustering
         model = AgglomerativeClustering(
             metric='precomputed',
             linkage='average',
@@ -673,12 +685,12 @@ def cluster_dimensions(
         )
         labels = model.fit_predict(dist.values)
 
-        # Construction des clusters
+        # Build clusters
         label_map = {}
         for col, label in zip(valid_cols, labels):
             label_map.setdefault(label, []).append(col)
 
-        # Fonction de cohérence moyenne (pour tri)
+        # Average coherence function used for sorting
         def avg_corr(cols):
             if len(cols) < 2:
                 return 0
@@ -686,7 +698,7 @@ def cluster_dimensions(
             tril = matrix.where(np.tril(np.ones(matrix.shape), -1).astype(bool))
             return tril.stack().mean()
 
-        # Tri des clusters
+        # Sort clusters
         sorted_clusters = sorted(
             [c for c in label_map.values() if len(c) >= min_cluster_size],
             key=avg_corr,
@@ -698,8 +710,8 @@ def cluster_dimensions(
                 break
             clusters.append(cluster_cols + ["timestamp"])
 
-        # === Corrélation entre chaque cluster et le reste ===
-        print("\n[Corrélation croisée entre clusters et autres colonnes :]")
+        # === Correlation between each cluster and the remaining columns ===
+        print("\n[Cross correlation between clusters and other columns:]")
 
         for i, cluster in enumerate(clusters):
             cluster_vars = [col for col in cluster if col != "timestamp"]
@@ -710,12 +722,12 @@ def cluster_dimensions(
 
             sub_corr = base_df[cluster_vars + others].corr().loc[cluster_vars, others]
             mean_cross_corr = sub_corr.abs().mean().mean()
-            print(f"  ↪ Cluster {i+1:02d} ({len(cluster_vars)} variables) ↔ autres : corr moyenne = {mean_cross_corr:.3f}")
+            print(f"  ↪ Cluster {i+1:02d} ({len(cluster_vars)} variables) ↔ others: mean corr = {mean_cross_corr:.3f}")
 
-        # === Corrélation entre familles de capteurs ===
-        print("\n[Corrélation entre familles de capteurs :]")
+        # === Correlation between sensor families ===
+        print("\n[Correlation between sensor families:]")
 
-        # Regroupement par famille (avant l’underscore final)
+        # Group by sensor family (before the trailing underscore)
         family_map = defaultdict(list)
         for col in base_df.columns:
             if col == "timestamp":
@@ -757,13 +769,16 @@ def pre_processed(
 ) -> Union[pd.DataFrame, List[pd.DataFrame], List[List[pd.DataFrame]]]:
     """
     Full preprocessing pipeline for one or several DataFrames.
-    - Interpolation & synchronisation
-    - Clustering (optionnel)
-    - Normalisation (optionnelle)
-    - Détection de fenêtre (optionnelle)
+    - Interpolation & synchronization
+    - Optional clustering
+    - Optional normalization
+    - Optional window detection
     """
 
     final_window_size = None
+
+    if isinstance(df, list) and not all(isinstance(x, pd.DataFrame) for x in df):
+        raise TypeError("df must be a DataFrame or a list of DataFrames")
 
     # === Cas d'une liste de DataFrames ===
     if isinstance(df, list):
@@ -781,12 +796,15 @@ def pre_processed(
                 if clustered_df.empty:
                     continue
                 if window_size is None:
-                    win_list = define_m_using_clustering(clustered_df)
-                    final_window_size = win_list[0][1]
-                    print(f"[WINDOW LIST - Cluster] Fenêtre → {final_window_size}")
+                    try:
+                        win_list = define_m_using_clustering(clustered_df)
+                        final_window_size = win_list[0][1]
+                    except ValueError:
+                        final_window_size = max(2, len(clustered_df) // 2)
+                    print(f"[WINDOW LIST - Cluster] Window → {final_window_size}")
                 else:
                     final_window_size = window_size
-                    print(f"[WINDOW LIST - Cluster] Fenêtre utilisateur → {final_window_size}")
+                    print(f"[WINDOW LIST - Cluster] User window → {final_window_size}")
                      
                 if clustered_df is not None and not clustered_df.empty:
                     group_result.append(clustered_df)
@@ -806,12 +824,15 @@ def pre_processed(
         df_interpolate = synchronize_on_common_grid(df, propagate_nan=True)
 
         if window_size is None:
-            win_list = define_m_using_clustering(df_interpolate)
-            final_window_size = win_list[0][1]
-            print(f"[WINDOW LIST] Fenêtre retenue → {final_window_size}")
+            try:
+                win_list = define_m_using_clustering(df_interpolate)
+                final_window_size = win_list[0][1]
+            except ValueError:
+                final_window_size = max(2, len(df_interpolate) // 2)
+            print(f"[WINDOW LIST] Selected window → {final_window_size}")
         else:
             final_window_size = window_size
-            print(f"[WINDOW LIST] Fenêtre utilisateur → {final_window_size}")
+            print(f"[WINDOW LIST] User window → {final_window_size}")
 
     
         df_normalize = normalization(
@@ -826,10 +847,10 @@ def pre_processed(
 
     if cluster:
 
-        # Étape 1 : interpolation sans propagation globale de NaN
+        # Step 1: interpolate without global NaN propagation
         interpolated_df = interpolate(df.copy(), gap_multiplier=gap_multiplier, propagate_nan=False)
 
-        # 2. Étape : clustering → tu récupères les noms de colonnes de chaque cluster
+        # Step 2: clustering to retrieve column names for each cluster
         clusters = cluster_dimensions(interpolated_df, top_k=top_k_cluster)
 
         cluster_outputs = []
@@ -846,7 +867,7 @@ def pre_processed(
             if window_size is None:
                 win_list = define_m_using_clustering(clustered_df)
                 final_window_size = win_list[0][1]
-                print(f"[WINDOW] Fenêtre retenue → {final_window_size}")
+                print(f"[WINDOW] Selected window → {final_window_size}")
             else:
                 final_window_size = window_size
            
@@ -867,16 +888,19 @@ def pre_processed(
 
         return group_result, group_result_normalize
 
-    # === Cas sans clustering ===
+    # === Case without clustering ===
     interpolated_df = interpolate(df.copy(), gap_multiplier)
 
     if window_size is None:
-        win_list = define_m_using_clustering(interpolated_df)
-        final_window_size = win_list[0][1]
-        print(f"[WINDOW] Fenêtre retenue → {final_window_size}")
+        try:
+            win_list = define_m_using_clustering(interpolated_df)
+            final_window_size = win_list[0][1]
+        except ValueError:
+            final_window_size = max(2, len(interpolated_df) // 2)
+        print(f"[WINDOW] Selected window → {final_window_size}")
     else:
         final_window_size = window_size
-        print(f"[WINDOW] Fenêtre utilisateur → {final_window_size}")
+        print(f"[WINDOW] User window → {final_window_size}")
 
 
     interpolated_df_normalize = normalization(
@@ -887,4 +911,4 @@ def pre_processed(
         window_size=final_window_size
     )
 
-    return interpolated_df, interpolated_df_normalize
+    return interpolated_df_normalize

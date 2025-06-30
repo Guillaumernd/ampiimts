@@ -57,7 +57,7 @@ def plot_patterns_and_discords(df, result, column='value', figsize=(12, 6)):
                          color=color,
                          label=f"{pattern['pattern_label']}" if j == 0 else "",
                          linewidth=2)
-                # marqueurs début, centre, fin
+                # mark start, center and end
                 label = f"{pattern['pattern_label']}" if j == 0 else None
                 ax1.axvspan(
                     df.index[start],
@@ -74,7 +74,7 @@ def plot_patterns_and_discords(df, result, column='value', figsize=(12, 6)):
             ax1.axvline(
                 df.index[discord], color='red', linestyle='-',
                 linewidth=0.8, alpha=0.3, zorder=0)
-    ax1.set_title("Motifs (début de fenêtre), Discords, and Matrix Profile")
+    ax1.set_title("Motifs (window start), Discords, and Matrix Profile")
     h1, l1 = ax1.get_legend_handles_labels()
     h2, l2 = ax2.get_legend_handles_labels()
     ax1.legend(h1 + h2, l1 + l2, loc='upper right')
@@ -242,7 +242,7 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
     xedges[-1] = dnums[-1] + diffs[-1] / 2
     yedges = np.linspace(0, n_dim, n_dim + 1)
 
-    fig2, axh = plt.subplots(1, 1, figsize=(20, 0.25 * n_dim))  # 0.25 à 0.35 est une bonne base
+    fig2, axh = plt.subplots(1, 1, figsize=(20, 0.25 * n_dim))  # 0.25 to 0.35 is a good starting point
     cmap = plt.cm.viridis.copy()
     cmap.set_bad("white")
 
@@ -281,9 +281,7 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
 
 
 def plot_motif_overlays(df, result, normalize=False):
-    """
-    Pour chaque motif détecté, affiche ses occurrences superposées par dimension.
-    """
+    """Overlay all occurrences of each detected motif for every dimension."""
     if result is None:
         print("None matrix_profile")
         return
@@ -293,7 +291,7 @@ def plot_motif_overlays(df, result, normalize=False):
     profile_df = result["matrix_profile"]
     if patterns:
         print(f"\n--- Cluster {i+1} ---")
-    # 1) Extraire les noms des colonnes originales à partir du matrix_profile
+    # 1) Extract original column names from the matrix profile
     original_cols = [col.replace("mp_dim_", "") for col in profile_df.columns]
     df = df.loc[:, original_cols]
 
@@ -313,7 +311,7 @@ def plot_motif_overlays(df, result, normalize=False):
             ax = axs[dim]
             for idx in indices:
                 if idx + window_size > len(df):
-                    continue  # Sécurité anti-dépassement
+                    continue  # Guard against overflow
                 segment = df.iloc[idx:idx + window_size, dim]
                 if normalize:
                     segment = (segment - segment.mean()) / (segment.std() + 1e-8)
@@ -345,11 +343,11 @@ def plot_all_patterns_and_discords(df, result, tick_step=500):
         elif isinstance(df, list) and all(isinstance(d, list) for d in df):
             for serie_id, serie_df_list in enumerate(df):
                 for cluster_id, d in enumerate(serie_df_list):
-                    print(f"\n--- Série {serie_id+1} · Cluster {cluster_id+1} ---")
+                    print(f"\n--- Series {serie_id+1} · Cluster {cluster_id+1} ---")
                     plot_multidim_patterns_and_discords(d, None)
         else:
             raise TypeError("Unsupported df structure when result is None.")
-        return  # rien à faire ensuite
+        return  # nothing else to do
 
     # --- Cas normaux ---
     if isinstance(df, pd.DataFrame) and isinstance(result, dict):
@@ -364,7 +362,7 @@ def plot_all_patterns_and_discords(df, result, tick_step=500):
         elif all(isinstance(d, list) for d in df) and all(isinstance(r, list) for r in result):
             for serie_id, (serie_df_list, serie_res_list) in enumerate(zip(df, result)):
                 for cluster_id, (d, r) in enumerate(zip(serie_df_list, serie_res_list)):
-                    print(f"\n--- Série {serie_id+1} · Cluster {cluster_id+1} ---")
+                    print(f"\n--- Series {serie_id+1} · Cluster {cluster_id+1} ---")
                     plot_multidim_patterns_and_discords(d, r, tick_step=tick_step)
         else:
             raise TypeError("Incompatible list structure for df and result.")
@@ -386,7 +384,7 @@ def plot_all_motif_overlays(df, result, normalize=False):
         elif isinstance(df, list) and all(isinstance(d, list) for d in df):
             for serie_id, serie_df_list in enumerate(df):
                 for cluster_id, d in enumerate(serie_df_list):
-                    print(f"\n--- Série {serie_id+1} · Cluster {cluster_id+1} ---")
+                    print(f"\n--- Series {serie_id+1} · Cluster {cluster_id+1} ---")
                     plot_motif_overlays(d, None, normalize=normalize)
         else:
             raise TypeError("Unsupported df structure when result is None.")
@@ -404,7 +402,7 @@ def plot_all_motif_overlays(df, result, normalize=False):
         elif all(isinstance(d, list) for d in df) and all(isinstance(r, list) for r in result):
             for serie_id, (serie_df_list, serie_res_list) in enumerate(zip(df, result)):
                 for cluster_id, (d, r) in enumerate(zip(serie_df_list, serie_res_list)):
-                    print(f"\n--- Série {serie_id+1} · Cluster {cluster_id+1} ---")
+                    print(f"\n--- Series {serie_id+1} · Cluster {cluster_id+1} ---")
                     plot_motif_overlays(d, r, normalize=normalize)
         else:
             raise TypeError("Incompatible list structure for df and result.")

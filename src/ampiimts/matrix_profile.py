@@ -59,7 +59,7 @@ def matrix_profile_process(
                 max_matches=max_matches,
             )
         except ValueError as e:
-            print(f"[MatrixProfile Warning] Échec du calcul avec fenêtre {window_size} → {e}")
+            print(f"[MatrixProfile Warning] Computation failed with window {window_size}: {e}")
             return None
 
 
@@ -76,7 +76,7 @@ def matrix_profile_process(
             motif=motif,
         )
     except ValueError as e:
-        print(f"[MatrixProfile Warning] Échec du calcul avec fenêtre {window_size} → {e}")
+        print(f"[MatrixProfile Warning] Computation failed with window {window_size}: {e}")
         return None
 
 def matrix_profile(
@@ -97,7 +97,7 @@ def matrix_profile(
         return None
 
     if isinstance(df_o, pd.DataFrame):
-        # Un seul DataFrame
+        # Single DataFrame
         if column is None and len(df_o.columns) == 1:
             column = df_o.columns[0]
         if window_size is None and "m" in df_o.attrs:
@@ -114,7 +114,7 @@ def matrix_profile(
         )
 
     elif isinstance(df_o, list) and all(isinstance(x, pd.DataFrame) for x in df_o):
-        # Liste plate de DataFrames
+        # Flat list of DataFrames
         return [
             matrix_profile_process(
                 df,
@@ -130,7 +130,7 @@ def matrix_profile(
         ]
 
     elif isinstance(df_o, list) and all(isinstance(x, list) for x in df_o):
-        # Liste de listes de DataFrames (cas avec cluster=True et plusieurs séries)
+        # List of lists of DataFrames (used with cluster=True and multiple series)
         return [
             [
                 matrix_profile_process(
