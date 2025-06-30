@@ -27,6 +27,7 @@ def synchronize_on_common_grid(
     Synchronizes multiple time series DataFrames on a common timestamp grid
     and returns a single multivariate DataFrame (columns renamed to avoid duplicates).
     """
+
     # 1. Interpolation indépendante
     dfs = [
         interpolate(df, gap_multiplier=gap_multiplier, propagate_nan=propagate_nan)
@@ -34,13 +35,13 @@ def synchronize_on_common_grid(
     ]
     dfs = [df for df in dfs if not df.empty]
 
-    # 2. Calcul des fréquences de chaque DataFrame
+    # 2. Calcul des fréquences
     freqs = [df.index.to_series().diff().median() for df in dfs]
     freqs_seconds = [f.total_seconds() for f in freqs if pd.notna(f)]
     median_freq = np.median(freqs_seconds)
     common_freq = pd.to_timedelta(median_freq, unit="s")
 
-    # 3. Filtrer les DataFrames avec fréquence trop éloignée (> 20%)
+    # 3. Filtrer les DataFrames trop éloignés de la fréquence médiane
     allowed_diff = median_freq * 0.2
     dfs_filtered = [
         df for i, df in enumerate(dfs)
@@ -53,34 +54,39 @@ def synchronize_on_common_grid(
     if not dfs:
         raise ValueError("Aucun DataFrame ne respecte la fréquence dominante.")
 
-    # 4. Vérifier si les index sont comparables (recouvrement temporel)
+    # 4. Vérifier si les plages temporelles sont proches (< 10% durée totale)
     reference_ranges = [(df.index.min(), df.index.max()) for df in dfs]
+    ref_start, ref_end = reference_ranges[0]
+    total_duration = (ref_end - ref_start).total_seconds()
+    allowed_shift = total_duration * 0.10  # 10% de la durée
+
     time_overlaps = all(
-        abs((start - reference_ranges[0][0]).total_seconds()) < 30 and
-        abs((end - reference_ranges[0][1]).total_seconds()) < 30
+        abs((start - ref_start).total_seconds()) <= allowed_shift and
+        abs((end - ref_end).total_seconds()) <= allowed_shift
         for start, end in reference_ranges
     )
 
     if time_overlaps:
-        # Cas classique → on choisit le plus court pour base
-        durations = [(df.index.max() - df.index.min()).total_seconds() for df in dfs]
-        min_duration_idx = int(np.argmin(durations))
-        min_time = dfs[min_duration_idx].index.min()
-        max_time = dfs[min_duration_idx].index.max()
+        # Grille temporelle basée sur la plus courte série
+        durations = [(end - start).total_seconds() for start, end in reference_ranges]
+        min_idx = int(np.argmin(durations))
+        min_time = dfs[min_idx].index.min()
+        max_time = dfs[min_idx].index.max()
         reference_index = pd.date_range(start=min_time, end=max_time, freq=common_freq)
-        print(f"[INFO] Using DataFrame #{min_duration_idx} to define reference time grid "
-              f"from {min_time} to {max_time} with frequency {common_freq}")
+        print(f"[INFO] Using aligned time grid from {min_time} to {max_time} "
+              f"with freq {common_freq} based on DataFrame #{min_idx}")
     else:
-        # Pas de recouvrement suffisant → grille neutre
+        # Grille neutre depuis 1970
         min_len = min(len(df) for df in dfs)
         reference_index = pd.date_range(
             start=pd.Timestamp("1970-01-01 00:00:00"),
             periods=min_len,
             freq=common_freq
         )
-        print(f"[INFO] No aligned ranges → Using fresh index from 1970 with length {min_len} and frequency {common_freq}")
+        print(f"[INFO] No aligned ranges → Using fresh index from 1970 "
+              f"with length {min_len} and frequency {common_freq}")
 
-    # 5. Reindex et interpolation (petits trous uniquement)
+    # 5. Reindexation et resampling sur la grille commune
     dfs_synced = []
     for i, df in enumerate(dfs):
         df_interp = df.interpolate(method="time", limit=2, limit_area="inside", limit_direction="both")
@@ -89,7 +95,7 @@ def synchronize_on_common_grid(
         df_synced.index = reference_index
         dfs_synced.append(df_synced)
 
-    # 6. Concaténation multivariée avec renommage
+    # 6. Concaténation multivariée
     renamed_dfs = [df.add_suffix(f"_{i}") for i, df in enumerate(dfs_synced)]
     df_combined = pd.concat(renamed_dfs, axis=1)
     df_combined.index.name = "timestamp"
@@ -158,6 +164,11 @@ def interpolate(
                 df.loc[mask, col] = np.nan
         return df
 
+    # Supprimer les colonnes non numériques sauf "timestamp"
+    non_numeric_cols = df.select_dtypes(exclude=["number"]).columns
+    non_numeric_cols = [col for col in non_numeric_cols if col != "timestamp"]
+    df = df.drop(columns=non_numeric_cols)
+
     # Sauvegarder les NaN d'origine
     original_nan_mask = df.isna()
 
@@ -175,12 +186,13 @@ def interpolate(
     new_nan_mask = new_nan_mask[df.columns]
 
     # Nettoyage index
-    if not isinstance(df.index, pd.DatetimeIndex):
-        if "timestamp" in df.columns:
-            df.index = pd.to_datetime(df["timestamp"], errors="coerce")
-            df = df.drop(columns=["timestamp"])
-        else:
-            df.index = pd.to_datetime(df.index, errors="coerce")
+   # Si une colonne "timestamp" est présente, on l'utilise comme index
+    if "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+        df = df.set_index("timestamp")
+    else:
+        raise ValueError("La colonne 'timestamp' est requise pour l'interpolation.")
+
     df.index = df.index.tz_localize(None)
     df = df[df.index.notna()]
     df = df[~df.index.duplicated(keep="first")]
