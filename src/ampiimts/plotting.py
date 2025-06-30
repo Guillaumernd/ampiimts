@@ -177,7 +177,7 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
     # === FIGURE 1: Timeseries Plots ============================================
     fig1, axs = plt.subplots(
         n_dim, 1,
-        figsize=(20, n_dim * 1),
+        figsize=(20, n_dim * 3),
         sharex=True,
     )
     if n_dim == 1:
@@ -230,6 +230,7 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
         ax.tick_params(axis="x", rotation=45, labelsize="small")
 
     axs[-1].set_xlabel("Date")
+    axs[dim].set_xlim(df.index.min(), df.index.max())
     fig1.tight_layout()
     plt.show()
 
@@ -242,7 +243,9 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
     xedges[-1] = dnums[-1] + diffs[-1] / 2
     yedges = np.linspace(0, n_dim, n_dim + 1)
 
-    fig2, axh = plt.subplots(1, 1, figsize=(20, 0.25 * n_dim))  # 0.25 to 0.35 is a good starting point
+    # Dynamic threshold 
+    heatmap_height = max(2.5, min(0.35 * n_dim, 10))  # between 2.5 and 10
+    fig2, axh = plt.subplots(1, 1, figsize=(20, heatmap_height))
     cmap = plt.cm.viridis.copy()
     cmap.set_bad("white")
 
@@ -251,7 +254,7 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
 
     for d in discords:
         xd = mdates.date2num(df.index[d])
-        axh.axvline(xd, color="red", linestyle="--", alpha=0.8, linewidth=1)
+        axh.axvline(xd, color="red", linestyle="--", alpha=0.4, linewidth=0.5)
 
     for pat_id, pat in enumerate(patterns):
         c = motif_colors[pat_id % len(motif_colors)]
