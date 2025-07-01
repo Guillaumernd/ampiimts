@@ -88,7 +88,10 @@ def exclude_discords(mp, window_size, discord_top_pct=0.04, X=None, max_nan_frac
 
 
 def discover_patterns_stumpy_mixed(
-    df, window_size, max_motifs=3, discord_top_pct=0.04,
+    df, 
+    window_size, 
+    max_motifs=3, 
+    discord_top_pct=0.04,
     max_matches=10
 ):
     """Detect motifs and automatic-percentile discords on a univariate signal,
@@ -225,7 +228,6 @@ def discover_patterns_mstump_mixed(
     discord_top_pct: float = 0.02,
     max_matches: int = 10,
     min_mdl_ratio: float = 0.25,
-    verbose: bool = True,
     cluster: bool = False,
     motif: bool = False,
 ):
@@ -270,9 +272,6 @@ def discover_patterns_mstump_mixed(
         max_count = max(counts.values())
         threshold = max(1, int(min_mdl_ratio * max_count))
         selected_dims = [i for i, c in counts.items() if c >= threshold]
-
-        if verbose:
-            print(f"[MDL] Dimensions retenues : {selected_dims} sur {list(range(d))}")
 
         # Réduction des dimensions
         X = X[selected_dims, :]

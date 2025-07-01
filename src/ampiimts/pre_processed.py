@@ -399,7 +399,6 @@ def aswn_with_trend(
     normed = _compute_aswn(values, window_size, min_std, min_valid_ratio)
     result = pd.Series(normed, index=series.index)
     if alpha > 0:
-        # print(window_size)
         trend = series.rolling(
             window=window_size * 10, center=True, min_periods=1
         ).mean()
@@ -466,8 +465,6 @@ def normalization(
 
         total_windows = len(series) - window_size + 1
         ratio = valid_windows / max(1, total_windows)
-
-        # print(f"[CHECK] {series.name} : {valid_windows} fenêtres valides ({ratio:.1%})")
 
         return True if ratio >= min_ratio else False
 
@@ -665,7 +662,7 @@ def cluster_dimensions(
         tril_values = dist.where(np.tril(np.ones(dist.shape), -1).astype(bool)).stack()
         mean_dist = tril_values.mean()
         std_dist = tril_values.std()
-        distance_threshold = mean_dist - 0.5 * std_dist
+        distance_threshold = mean_dist - 0.2 * std_dist
 
         # Hierarchical clustering
         model = AgglomerativeClustering(
@@ -746,9 +743,8 @@ def cluster_dimensions(
 
     return clusters
 
-    
 def pre_processed(
-    df: Union[pd.DataFrame, List[pd.DataFrame]],
+    data: Union[pd.DataFrame, List[pd.DataFrame]],
     gap_multiplier: float = 15,
     min_std: float = 1e-2,
     min_valid_ratio: float = 0.8,
@@ -760,146 +756,84 @@ def pre_processed(
     mode: str = 'hybrid',
     top_k_cluster: int = 4,
 ) -> Union[pd.DataFrame, List[pd.DataFrame], List[List[pd.DataFrame]]]:
-    """
-    Full preprocessing pipeline for one or several DataFrames.
-    - Interpolation & synchronization
-    - Optional clustering
-    - Optional normalization
-    - Optional window detection
-    """
 
-    final_window_size = None
+    def get_window_size(df, fallback_len):
+        if window_size is not None:
+            return window_size
+        try:
+            win_list = define_m_using_clustering(df)
+            return win_list[0][1]
+        except ValueError:
+            return max(2, fallback_len // 2)
 
-    if isinstance(df, list) and not all(isinstance(x, pd.DataFrame) for x in df):
-        raise TypeError("df must be a DataFrame or a list of DataFrames")
-
-    # === Cas d'une liste de DataFrames ===
-    if isinstance(df, list):
-
-        if cluster:
-            synced_dfs = synchronize_on_common_grid(df, propagate_nan=False)
-            clustered_groups = cluster_dimensions(synced_dfs, top_k=top_k_cluster, mode=mode)
-            cluster_outputs = []
-            group_result_normalize = []
-            group_result = []
-
-            for i, col_names in enumerate(sorted(clustered_groups)):
-                cluster_df = synced_dfs.reset_index()[col_names].copy()
-                clustered_df = interpolate(cluster_df, gap_multiplier=gap_multiplier)
-                if clustered_df.empty:
-                    continue
-                if window_size is None:
-                    try:
-                        win_list = define_m_using_clustering(clustered_df)
-                        final_window_size = win_list[0][1]
-                    except ValueError:
-                        final_window_size = max(2, len(clustered_df) // 2)
-                else:
-                    final_window_size = window_size
-                     
-                print(f"Cluster {i+1} [WINDOW SIZE] → {final_window_size}")
-
-                if clustered_df is not None and not clustered_df.empty:
-                    group_result.append(clustered_df)
-                clustered_df_normalize = normalization(
-                    clustered_df,
-                    min_std=min_std,
-                    min_valid_ratio=min_valid_ratio,
-                    alpha=alpha,
-                    window_size=final_window_size
-                )
-                           
-                if clustered_df_normalize is not None and not clustered_df_normalize.empty:
-                    group_result_normalize.append(clustered_df_normalize)
-
-            return group_result, group_result_normalize
-
-        df_interpolate = synchronize_on_common_grid(df, propagate_nan=True)
-
-        if window_size is None:
-            try:
-                win_list = define_m_using_clustering(df_interpolate)
-                final_window_size = win_list[0][1]
-            except ValueError:
-                final_window_size = max(2, len(df_interpolate) // 2)
-        else:
-            final_window_size = window_size
-
-        print(f"[WINDOW SIZE] → {final_window_size}")
-
-        df_normalize = normalization(
-            df_single,
+    def process_group(df_group):
+        interpolated = interpolate(df_group, gap_multiplier=gap_multiplier)
+        if interpolated.empty:
+            return None, None
+        final_ws = get_window_size(interpolated, len(interpolated))
+        normalized = normalization(
+            interpolated,
             min_std=min_std,
             min_valid_ratio=min_valid_ratio,
             alpha=alpha,
-            window_size=final_window_size
-        )
+            window_size=final_ws
+        ) if normalize else None
+        return interpolated, normalized
 
-        return df_interpolate, df_normalize
+    # === Vérification type ===
+    if isinstance(data, list) and not all(isinstance(x, pd.DataFrame) for x in data):
+        raise TypeError("df must be a DataFrame or a list of DataFrames")
 
-    if cluster:
+    # === Cas 1 : Liste de DataFrames ===
+    if isinstance(data, list):
+        if cluster:
+            synced_dfs = synchronize_on_common_grid(data, propagate_nan=False)
+            clustered_groups = cluster_dimensions(synced_dfs, top_k=top_k_cluster, mode=mode)
 
-        # Step 1: interpolate without global NaN propagation
-        interpolated_df = interpolate(df.copy(), gap_multiplier=gap_multiplier, propagate_nan=False)
-
-        # Step 2: clustering to retrieve column names for each cluster
-        clusters = cluster_dimensions(interpolated_df, top_k=top_k_cluster, mode=mode)
-
-        cluster_outputs = []
-        group_result = []
-        group_result_normalize = []
-
-        for i, col_names in enumerate(clusters):
-            print(len(col_names))
-            cluster_df = df[col_names].copy()
-
-            clustered_df = interpolate(cluster_df, gap_multiplier=gap_multiplier)
-            if clustered_df.empty:
-                    continue
-            if window_size is None:
-                win_list = define_m_using_clustering(clustered_df)
-                final_window_size = win_list[0][1]
-            else:
-                final_window_size = window_size
-
-            print(f"Cluster {i+1} [WINDOW SIZE] → {final_window_size}")
-
-            if clustered_df is not None and not clustered_df.empty:
-                group_result.append(clustered_df)
-
-            clustered_df_normalize = normalization(
-                clustered_df,
+            group_result, group_result_normalize = [], []
+            for col_names in sorted(clustered_groups):
+                df_cluster = synced_dfs.reset_index()[col_names]
+                interpolated, normalized = process_group(df_cluster)
+                if interpolated is not None:
+                    group_result.append(interpolated)
+                if normalized is not None:
+                    group_result_normalize.append(normalized)
+            return group_result, group_result_normalize
+        else:
+            df_interpolate = synchronize_on_common_grid(data, propagate_nan=True)
+            final_ws = get_window_size(df_interpolate, len(df_interpolate))
+            df_normalize = normalization(
+                df_interpolate,
                 min_std=min_std,
                 min_valid_ratio=min_valid_ratio,
                 alpha=alpha,
-                window_size=final_window_size
-            )
-                    
-            if clustered_df_normalize is not None and not clustered_df_normalize.empty:
-                group_result_normalize.append(clustered_df_normalize)
+                window_size=final_ws
+            ) if normalize else None
+            return df_interpolate, df_normalize
 
+    # === Cas 2 : DataFrame unique ===
+    df = data
+    if cluster:
+        interpolated_df = interpolate(df.copy(), gap_multiplier=gap_multiplier, propagate_nan=False)
+        clusters = cluster_dimensions(interpolated_df, top_k=top_k_cluster, mode=mode)
+
+        group_result, group_result_normalize = [], []
+        for col_names in clusters:
+            df_cluster = df[col_names]
+            interpolated, normalized = process_group(df_cluster)
+            if interpolated is not None:
+                group_result.append(interpolated)
+            if normalized is not None:
+                group_result_normalize.append(normalized)
         return group_result, group_result_normalize
-
-    # === Case without clustering ===
-    interpolated_df = interpolate(df.copy(), gap_multiplier)
-
-    if window_size is None:
-        try:
-            win_list = define_m_using_clustering(interpolated_df)
-            final_window_size = win_list[0][1]
-        except ValueError:
-            final_window_size = max(2, len(interpolated_df) // 2)
     else:
-        final_window_size = window_size
-
-    print(f"[WINDOW SIZE] → {final_window_size}")
-
-    interpolated_df_normalize = normalization(
-        interpolated_df,
-        min_std=min_std,
-        min_valid_ratio=min_valid_ratio,
-        alpha=alpha,
-        window_size=final_window_size
-    )
-
-    return interpolated_df_normalize
+        interpolated_df = interpolate(df.copy(), gap_multiplier=gap_multiplier)
+        final_ws = get_window_size(interpolated_df, len(interpolated_df))
+        normalized = normalization(
+            interpolated_df,
+            min_std=min_std,
+            min_valid_ratio=min_valid_ratio,
+            alpha=alpha,
+            window_size=final_ws
+        ) if normalize else None
+        return normalized

@@ -107,6 +107,7 @@ def plot_patterns_and_discords(df, result, column='value', figsize=(12, 6)):
 
 
 
+
 def plot_multidim_patterns_and_discords(df, result, tick_step=500):
     """
     Plot:
@@ -177,7 +178,7 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
     # === FIGURE 1: Timeseries Plots ============================================
     fig1, axs = plt.subplots(
         n_dim, 1,
-        figsize=(20, n_dim * 1),
+        figsize=(20, n_dim * 3),
         sharex=True,
     )
     if n_dim == 1:
@@ -219,7 +220,7 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
 
         # Discords
         for j, d in enumerate(discords):
-            ax.axvline(df.index[d], color="red", linestyle="--", alpha=0.8, linewidth=0.5,
+            ax.axvline(df.index[d], color="red", linestyle="-", alpha=1, linewidth=0.3,
                        label="Discord" if j == 0 else None)
 
         ax.set_ylabel(col)
@@ -230,6 +231,7 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
         ax.tick_params(axis="x", rotation=45, labelsize="small")
 
     axs[-1].set_xlabel("Date")
+    axs[dim].set_xlim(df.index.min(), df.index.max())
     fig1.tight_layout()
     plt.show()
 
@@ -242,7 +244,9 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
     xedges[-1] = dnums[-1] + diffs[-1] / 2
     yedges = np.linspace(0, n_dim, n_dim + 1)
 
-    fig2, axh = plt.subplots(1, 1, figsize=(20, 0.25 * n_dim))  # 0.25 à 0.35 est une bonne base
+    # Dynamic threshold 
+    heatmap_height = max(2.5, min(0.35 * n_dim, 10))  # between 2.5 and 10
+    fig2, axh = plt.subplots(1, 1, figsize=(20, heatmap_height))
     cmap = plt.cm.viridis.copy()
     cmap.set_bad("white")
 
@@ -251,7 +255,7 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
 
     for d in discords:
         xd = mdates.date2num(df.index[d])
-        axh.axvline(xd, color="red", linestyle="--", alpha=0.8, linewidth=1)
+        axh.axvline(xd, color="red", linestyle="-", alpha=1, linewidth=0.45)
 
     for pat_id, pat in enumerate(patterns):
         c = motif_colors[pat_id % len(motif_colors)]
@@ -279,7 +283,6 @@ def plot_multidim_patterns_and_discords(df, result, tick_step=500):
     fig2.tight_layout()
     plt.show()
 
-
 def plot_motif_overlays(df, result, normalize=False):
     """
     Pour chaque motif détecté, affiche ses occurrences superposées par dimension.
@@ -292,7 +295,7 @@ def plot_motif_overlays(df, result, normalize=False):
     patterns = result["patterns"]
     profile_df = result["matrix_profile"]
     if patterns:
-        print(f"\n--- Cluster {i+1} ---")
+        print(f"\n--- Cluster {i+1} (Window size : {window_size}) ---")
     # 1) Extraire les noms des colonnes originales à partir du matrix_profile
     original_cols = [col.replace("mp_dim_", "") for col in profile_df.columns]
     df = df.loc[:, original_cols]
@@ -339,14 +342,8 @@ def plot_all_patterns_and_discords(df, result, tick_step=500):
         # Cas liste plate
         elif isinstance(df, list) and all(isinstance(d, pd.DataFrame) for d in df):
             for i, d in enumerate(df):
-                print(f"\n--- Cluster {i+1} ---")
+                print(f"\n--- Cluster {i+1} (Window size : {result["window_size"]}) ---")
                 plot_multidim_patterns_and_discords(d, None)
-        # Cas liste de listes
-        elif isinstance(df, list) and all(isinstance(d, list) for d in df):
-            for serie_id, serie_df_list in enumerate(df):
-                for cluster_id, d in enumerate(serie_df_list):
-                    print(f"\n--- Série {serie_id+1} · Cluster {cluster_id+1} ---")
-                    plot_multidim_patterns_and_discords(d, None)
         else:
             raise TypeError("Unsupported df structure when result is None.")
         return  # rien à faire ensuite
@@ -358,14 +355,8 @@ def plot_all_patterns_and_discords(df, result, tick_step=500):
     elif isinstance(df, list) and isinstance(result, list):
         if all(isinstance(d, pd.DataFrame) for d in df) and all(isinstance(r, dict) for r in result):
             for i, (d, r) in enumerate(zip(df, result)):
-                print(f"\n--- Cluster {i+1} ---")
+                print(f"\n--- Cluster {i+1} (Window size : {r["window_size"]}) ---")
                 plot_multidim_patterns_and_discords(d, r, tick_step=tick_step)
-
-        elif all(isinstance(d, list) for d in df) and all(isinstance(r, list) for r in result):
-            for serie_id, (serie_df_list, serie_res_list) in enumerate(zip(df, result)):
-                for cluster_id, (d, r) in enumerate(zip(serie_df_list, serie_res_list)):
-                    print(f"\n--- Série {serie_id+1} · Cluster {cluster_id+1} ---")
-                    plot_multidim_patterns_and_discords(d, r, tick_step=tick_step)
         else:
             raise TypeError("Incompatible list structure for df and result.")
     else:
