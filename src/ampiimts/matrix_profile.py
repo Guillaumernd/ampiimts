@@ -81,7 +81,6 @@ def matrix_profile_process(
 
 def matrix_profile(
     df_o: Union[pd.DataFrame, List[pd.DataFrame], List[List[pd.DataFrame]]],
-    window_size: Optional[int] = None,
     n_jobs: int = 4,
     column: str | None = None,
     max_motifs: int = 5,
@@ -89,7 +88,6 @@ def matrix_profile(
     max_matches: int = 10,
     cluster:bool = False,
     motif:bool =False,
-
 ) -> Union[dict, List[dict], List[List[dict]]]:
     """Compute the matrix profile for one or several DataFrames."""
         
@@ -118,7 +116,6 @@ def matrix_profile(
         return [
             matrix_profile_process(
                 df,
-                window_size=window_size,
                 column=column,
                 max_motifs=max_motifs,
                 discord_top_pct=discord_top_pct,
@@ -135,7 +132,6 @@ def matrix_profile(
             [
                 matrix_profile_process(
                     df,
-                    window_size=window_size,
                     column=column,
                     max_motifs=max_motifs,
                     discord_top_pct=discord_top_pct,

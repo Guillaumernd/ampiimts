@@ -605,6 +605,7 @@ def define_m_using_clustering(
     final = aggregated[:k]
     return final
 
+
 def cluster_dimensions(
     df: Union[pd.DataFrame, List[pd.DataFrame]],
     group_size: int = 5,
@@ -615,12 +616,14 @@ def cluster_dimensions(
     mode: str = 'hybrid'  # 'motif', 'discord', 'hybrid'
 ) -> List[List[str]]:
     """
-    Cluster les dimensions d’un DataFrame selon leur cohérence temporelle.
-    Trois modes : 'motif' (groupes homogènes), 'discord' (groupes variés),
-    ou 'hybrid' (groupes complémentaires).
-    Affiche aussi :
-      - La corrélation moyenne entre clusters et le reste des colonnes
-      - La corrélation moyenne entre familles de capteurs (par nom)
+    Cluster DataFrame dimensions based on temporal coherence.
+    Modes:
+        - ``motif``   : homogeneous groups
+        - ``discord`` : heterogeneous groups
+        - ``hybrid``  : complementary groups
+    The function also displays:
+        - Average correlation between clusters and remaining columns
+        - Average correlation between sensor families (by name)
     """
 
     if isinstance(df, pd.DataFrame):
@@ -645,10 +648,10 @@ def cluster_dimensions(
         if len(valid_cols) < 2:
             continue
 
-        # Matrice de corrélation
+        # Correlation matrix
         corr = base_df[valid_cols].corr()
 
-        # Distance en fonction du mode choisi
+        # Distance depending on the chosen mode
         if mode == 'motif':
             dist = 1 - corr.pow(2).abs()
         elif mode == 'discord':
@@ -658,13 +661,13 @@ def cluster_dimensions(
 
         dist = dist.fillna(1.0)
 
-        # Distance moyenne pour seuil dynamique
+        # Mean distance used for dynamic threshold
         tril_values = dist.where(np.tril(np.ones(dist.shape), -1).astype(bool)).stack()
         mean_dist = tril_values.mean()
         std_dist = tril_values.std()
         distance_threshold = mean_dist - 0.5 * std_dist
 
-        # Clustering hiérarchique
+        # Hierarchical clustering
         model = AgglomerativeClustering(
             metric='precomputed',
             linkage='average',
@@ -673,12 +676,12 @@ def cluster_dimensions(
         )
         labels = model.fit_predict(dist.values)
 
-        # Construction des clusters
+        # Build clusters
         label_map = {}
         for col, label in zip(valid_cols, labels):
             label_map.setdefault(label, []).append(col)
 
-        # Fonction de cohérence moyenne (pour tri)
+        # Average coherence function used for sorting
         def avg_corr(cols):
             if len(cols) < 2:
                 return 0
@@ -686,7 +689,7 @@ def cluster_dimensions(
             tril = matrix.where(np.tril(np.ones(matrix.shape), -1).astype(bool))
             return tril.stack().mean()
 
-        # Tri des clusters
+        # Sort clusters
         sorted_clusters = sorted(
             [c for c in label_map.values() if len(c) >= min_cluster_size],
             key=avg_corr,
@@ -698,8 +701,9 @@ def cluster_dimensions(
                 break
             clusters.append(cluster_cols + ["timestamp"])
 
-        # === Corrélation entre chaque cluster et le reste ===
-        print("\n[Corrélation croisée entre clusters et autres colonnes :]")
+        # === Correlation between each cluster and the remaining columns ===
+        print("\n[CLUSTERING]")
+        print("\n Cross correlation between columns in each clusters :")
 
         for i, cluster in enumerate(clusters):
             cluster_vars = [col for col in cluster if col != "timestamp"]
@@ -710,12 +714,12 @@ def cluster_dimensions(
 
             sub_corr = base_df[cluster_vars + others].corr().loc[cluster_vars, others]
             mean_cross_corr = sub_corr.abs().mean().mean()
-            print(f"  ↪ Cluster {i+1:02d} ({len(cluster_vars)} variables) ↔ autres : corr moyenne = {mean_cross_corr:.3f}")
+            print(f"    Cluster {i+1:02d} ({len(cluster_vars)} variables) correlation = {mean_cross_corr:.3f}")
 
-        # === Corrélation entre familles de capteurs ===
-        print("\n[Corrélation entre familles de capteurs :]")
+        # === Correlation between sensor families ===
+        print("\n Correlation between parameters in sensors :")
 
-        # Regroupement par famille (avant l’underscore final)
+        # Group by sensor family (before the trailing underscore)
         family_map = defaultdict(list)
         for col in base_df.columns:
             if col == "timestamp":
@@ -735,14 +739,14 @@ def cluster_dimensions(
                 mean_corr = sub_corr.abs().mean().mean()
                 family_corr.loc[f1, f2] = mean_corr
 
-        print(family_corr.round(2))
-
+        print(f"{family_corr.round(2)}")
+    print("\n")
     if not clusters:
         print("Skipping DataFrame: not enough rich dimensions — too much noise, constant values, or missing data.")
 
     return clusters
 
-
+    
 def pre_processed(
     df: Union[pd.DataFrame, List[pd.DataFrame]],
     gap_multiplier: float = 15,
@@ -753,41 +757,48 @@ def pre_processed(
     sort_by_variables: bool = True,
     cluster: bool = False,
     normalize: bool = True,
+    mode: str = 'hybrid',
     top_k_cluster: int = 4,
 ) -> Union[pd.DataFrame, List[pd.DataFrame], List[List[pd.DataFrame]]]:
     """
     Full preprocessing pipeline for one or several DataFrames.
-    - Interpolation & synchronisation
-    - Clustering (optionnel)
-    - Normalisation (optionnelle)
-    - Détection de fenêtre (optionnelle)
+    - Interpolation & synchronization
+    - Optional clustering
+    - Optional normalization
+    - Optional window detection
     """
 
     final_window_size = None
+
+    if isinstance(df, list) and not all(isinstance(x, pd.DataFrame) for x in df):
+        raise TypeError("df must be a DataFrame or a list of DataFrames")
 
     # === Cas d'une liste de DataFrames ===
     if isinstance(df, list):
 
         if cluster:
             synced_dfs = synchronize_on_common_grid(df, propagate_nan=False)
-            clustered_groups = cluster_dimensions(synced_dfs, top_k=top_k_cluster)
+            clustered_groups = cluster_dimensions(synced_dfs, top_k=top_k_cluster, mode=mode)
             cluster_outputs = []
             group_result_normalize = []
             group_result = []
 
-            for col_names in sorted(clustered_groups, reverse=True):
+            for i, col_names in enumerate(sorted(clustered_groups)):
                 cluster_df = synced_dfs.reset_index()[col_names].copy()
                 clustered_df = interpolate(cluster_df, gap_multiplier=gap_multiplier)
                 if clustered_df.empty:
                     continue
                 if window_size is None:
-                    win_list = define_m_using_clustering(clustered_df)
-                    final_window_size = win_list[0][1]
-                    print(f"[WINDOW LIST - Cluster] Fenêtre → {final_window_size}")
+                    try:
+                        win_list = define_m_using_clustering(clustered_df)
+                        final_window_size = win_list[0][1]
+                    except ValueError:
+                        final_window_size = max(2, len(clustered_df) // 2)
                 else:
                     final_window_size = window_size
-                    print(f"[WINDOW LIST - Cluster] Fenêtre utilisateur → {final_window_size}")
                      
+                print(f"Cluster {i+1} [WINDOW SIZE] → {final_window_size}")
+
                 if clustered_df is not None and not clustered_df.empty:
                     group_result.append(clustered_df)
                 clustered_df_normalize = normalization(
@@ -806,14 +817,16 @@ def pre_processed(
         df_interpolate = synchronize_on_common_grid(df, propagate_nan=True)
 
         if window_size is None:
-            win_list = define_m_using_clustering(df_interpolate)
-            final_window_size = win_list[0][1]
-            print(f"[WINDOW LIST] Fenêtre retenue → {final_window_size}")
+            try:
+                win_list = define_m_using_clustering(df_interpolate)
+                final_window_size = win_list[0][1]
+            except ValueError:
+                final_window_size = max(2, len(df_interpolate) // 2)
         else:
             final_window_size = window_size
-            print(f"[WINDOW LIST] Fenêtre utilisateur → {final_window_size}")
 
-    
+        print(f"[WINDOW SIZE] → {final_window_size}")
+
         df_normalize = normalization(
             df_single,
             min_std=min_std,
@@ -826,11 +839,11 @@ def pre_processed(
 
     if cluster:
 
-        # Étape 1 : interpolation sans propagation globale de NaN
+        # Step 1: interpolate without global NaN propagation
         interpolated_df = interpolate(df.copy(), gap_multiplier=gap_multiplier, propagate_nan=False)
 
-        # 2. Étape : clustering → tu récupères les noms de colonnes de chaque cluster
-        clusters = cluster_dimensions(interpolated_df, top_k=top_k_cluster)
+        # Step 2: clustering to retrieve column names for each cluster
+        clusters = cluster_dimensions(interpolated_df, top_k=top_k_cluster, mode=mode)
 
         cluster_outputs = []
         group_result = []
@@ -846,11 +859,11 @@ def pre_processed(
             if window_size is None:
                 win_list = define_m_using_clustering(clustered_df)
                 final_window_size = win_list[0][1]
-                print(f"[WINDOW] Fenêtre retenue → {final_window_size}")
             else:
                 final_window_size = window_size
-           
-            
+
+            print(f"Cluster {i+1} [WINDOW SIZE] → {final_window_size}")
+
             if clustered_df is not None and not clustered_df.empty:
                 group_result.append(clustered_df)
 
@@ -867,17 +880,19 @@ def pre_processed(
 
         return group_result, group_result_normalize
 
-    # === Cas sans clustering ===
+    # === Case without clustering ===
     interpolated_df = interpolate(df.copy(), gap_multiplier)
 
     if window_size is None:
-        win_list = define_m_using_clustering(interpolated_df)
-        final_window_size = win_list[0][1]
-        print(f"[WINDOW] Fenêtre retenue → {final_window_size}")
+        try:
+            win_list = define_m_using_clustering(interpolated_df)
+            final_window_size = win_list[0][1]
+        except ValueError:
+            final_window_size = max(2, len(interpolated_df) // 2)
     else:
         final_window_size = window_size
-        print(f"[WINDOW] Fenêtre utilisateur → {final_window_size}")
 
+    print(f"[WINDOW SIZE] → {final_window_size}")
 
     interpolated_df_normalize = normalization(
         interpolated_df,
@@ -887,4 +902,4 @@ def pre_processed(
         window_size=final_window_size
     )
 
-    return interpolated_df, interpolated_df_normalize
+    return interpolated_df_normalize

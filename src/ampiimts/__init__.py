@@ -29,6 +29,10 @@ from .motif_pattern import (
     discover_patterns_mstump_mixed,
 )
 
+from .ampiimts import (
+    ampiimts
+)
+
 __all__ = [
     "interpolate",
     "synchronize_on_common_grid",
@@ -45,4 +49,5 @@ __all__ = [
     "plot_motif_overlays",
     "plot_all_motif_overlays",
     "plot_all_patterns_and_discords",
+    "ampiimts",
 ]
