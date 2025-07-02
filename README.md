@@ -61,8 +61,3 @@ submitting changes.
 
 This project is released under the MIT license. See [LICENCE](LICENCE) for
 details.
-src/ampiimts/__init__.py
-+0
--2
-
-src/ampiimts/plotting.py
