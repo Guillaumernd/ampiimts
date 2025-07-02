@@ -6,125 +6,6 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-def plot_patterns_and_discords(
-    df: pd.DataFrame,
-    result: dict,
-    column: str = "value",
-    figsize: tuple = (12, 6),
-) -> None:
-    """Plot signal, motifs and discords together with the matrix profile.
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        Input signal with a datetime index.
-    result : dict
-        Output dictionary from motif discovery functions.
-    column : str, optional
-        Name of the column to display.
-    figsize : tuple, optional
-        Figure size in inches.
-
-    Returns
-    -------
-    None
-        The figure is displayed using ``matplotlib``.
-    """
-    df = df.copy()
-    if isinstance(df.index, pd.DatetimeIndex):
-        name = df.index.name or "timestamp"
-    elif ("timestamp" in df.columns
-          and pd.api.types.is_datetime64_any_dtype(df["timestamp"])):
-        pass
-
-    motif_colors = ['tab:green', 'tab:purple', 'tab:blue']
-    n_patterns = len(result['patterns'])
-    window_size = result['window_size']
-    height_ratios = [2] + [1] * n_patterns if n_patterns else [2]
-
-    fig, axs = plt.subplots(
-        n_patterns + 1,
-        1,
-        figsize=(figsize[0], figsize[1] * (1 + 0.6 * n_patterns)),
-        gridspec_kw={"height_ratios": height_ratios},
-    )
-    if not isinstance(axs, (list, np.ndarray)):
-        axs = [axs]
-
-    # -- SUBPLOT 1: signal, motifs, discords and matrix profile --
-    ax1 = axs[0]
-    ax1.plot(df.index, df[column], label='Original Signal', color='black', alpha=0.1)
-    ax1.set_xlabel("Timestamp")
-    ax1.set_ylabel(column)
-    matrix_profile_values = result["matrix_profile"]['value']
-    mp_len = len(matrix_profile_values)
-    center_indices = np.arange(mp_len)
-    ax2 = ax1.twinx()
-    ax2.plot(df.index[center_indices], matrix_profile_values,
-             label='Matrix Profile', color='blue', alpha=0.6)
-    ax2.set_ylabel('Matrix Profile')
-
-    # Plot motifs on main signal
-    for i, pattern in enumerate(result['patterns']):
-        color = motif_colors[i % len(motif_colors)]
-        motif_starts = pattern["motif_indices_debut"]
-        for j, start in enumerate(motif_starts):
-            end = start + window_size
-            if 0 <= start < len(df) and end <= len(df):
-                ax1.plot(df.index[start:end], df[column].iloc[start:end],
-                         color=color,
-                         label=f"{pattern['pattern_label']}" if j == 0 else "",
-                         linewidth=2)
-                # highlight start and end of the motif window
-                label = f"{pattern['pattern_label']}" if j == 0 else None
-                ax1.axvspan(
-                    df.index[start],
-                    df.index[end],
-                    color=color,
-                    alpha=0.3,
-                    label=label
-                )
-
-
-    # Discords
-    for discord in result['discord_indices']:
-        if 0 <= discord < len(df):
-            ax1.axvline(
-                df.index[discord], color='red', linestyle='-',
-                linewidth=0.8, alpha=0.3, zorder=0)
-    ax1.set_title("Motifs (window start), Discords and Matrix Profile")
-    h1, l1 = ax1.get_legend_handles_labels()
-    h2, l2 = ax2.get_legend_handles_labels()
-    ax1.legend(h1 + h2, l1 + l2, loc='upper right')
-    ax1.grid(True)
-
-    # -- SUBPLOTS BELOW: original segments for each pattern --
-    for i, pattern in enumerate(result["patterns"]):
-        ax_motif = axs[i + 1]
-        color = motif_colors[i % len(motif_colors)]
-        motif_starts = pattern["motif_indices_debut"]
-        medoid_start = pattern["medoid_idx"]
-        xs = np.arange(window_size)
-        # Plot every segment
-        for start in motif_starts:
-            if 0 <= start <= len(df) - window_size:
-                seg = df[column].iloc[start:start + window_size].values
-                ax_motif.plot(xs, seg, color=color, alpha=0.2, linewidth=1)
-        # Highlight the medoid
-        if 0 <= medoid_start <= len(df) - window_size:
-            medoid_seg = df[column].iloc[medoid_start:medoid_start + window_size].values
-            ax_motif.plot(xs, medoid_seg, color='black', linewidth=0.5, label='medoid')
-        ax_motif.set_title(pattern["pattern_label"])
-        ax_motif.set_xlabel("Relative index in window")
-        ax_motif.set_ylabel(column)
-        ax_motif.legend()
-        ax_motif.grid(True)
-
-    plt.tight_layout(pad=3.0)
-    plt.show()
-
-
-
 
 def plot_multidim_patterns_and_discords(
     df: pd.DataFrame,
@@ -310,6 +191,7 @@ def plot_multidim_patterns_and_discords(
     fig2.tight_layout()
     plt.show()
 
+
 def plot_motif_overlays(
     df: pd.DataFrame,
     result: dict | None,
@@ -359,8 +241,10 @@ def plot_motif_overlays(
             ax = axs[dim]
             for idx in indices:
                 if idx + window_size > len(df):
-                    continue  # safeguard against index overflow
+                    continue  # Skip if segment goes beyond the end
                 segment = df.iloc[idx:idx + window_size, dim]
+                if len(segment) != window_size:
+                    continue
                 if normalize:
                     segment = (segment - segment.mean()) / (segment.std() + 1e-8)
                 ax.plot(np.arange(len(segment)), segment, alpha=0.6, color=c)
@@ -371,6 +255,7 @@ def plot_motif_overlays(
         fig.suptitle(f"Overlay of Motif Occurrences — {motif_label}", fontsize=14)
         plt.tight_layout()
         plt.show()
+
 
 def plot_all_patterns_and_discords(
     df: pd.DataFrame | list,
@@ -397,6 +282,7 @@ def plot_all_patterns_and_discords(
     if result is None:
         # Simple case
         if isinstance(df, pd.DataFrame):
+            print(f"Window size : {result['window_size']} ---")
             plot_multidim_patterns_and_discords(df, None)
         # Flat list case
         elif isinstance(df, list) and all(isinstance(d, pd.DataFrame) for d in df):

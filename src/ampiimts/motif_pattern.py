@@ -198,9 +198,10 @@ def discover_patterns_stumpy_mixed(
     # Pad with NaN so the index matches the original length
     nan_pad = np.full(window_size // 2, np.nan)
     df_profile_with_nan = pd.DataFrame(
-        np.concatenate([nan_pad, df_profile['value'].values, nan_pad]),
-        columns=['value']
+    np.concatenate([nan_pad, df_profile['value'].values, nan_pad]).astype(float),
+    columns=['value']
     )
+
     df_profile_with_nan.index = df.index[:len(df_profile_with_nan)]
 
     # 1) Strict cutoff at the best 0.5% profile values

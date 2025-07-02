@@ -17,8 +17,8 @@ from .plotting import (
 import os
 import pandas as pd
 
-def ampiimts(
-    data: Union[pd.DataFrame, List[pd.DataFrame]],
+def process(
+    pds: Union[pd.DataFrame, List[pd.DataFrame]],
     gap_multiplier: float = 15,
     min_std: float = 1e-2,
     min_valid_ratio: float = 0.8,
@@ -32,13 +32,12 @@ def ampiimts(
     discord_top_pct: float = 0.04,
     max_matches: int = 10,
     motif: bool = False,
-    max_len: int = None,
 ) -> Tuple[
     Union[pd.DataFrame, List[pd.DataFrame]],
     Union[pd.DataFrame, List[pd.DataFrame]],
     Union[Dict[str, Any], List[Dict[str, Any]]]
 ]:
-    """Complete motif and discord analysis pipeline.
+    """Process one or several DataFrames and return analysis results.
 
     Parameters
     ----------
@@ -80,25 +79,6 @@ def ampiimts(
         dataframes and the matrix profile result.
     """
 
-    if os.path.isdir(data):  # data is a directory
-        pds = []
-        with os.scandir(data) as entries:
-            for entry in entries:
-                if entry.is_file() and entry.name.endswith('.csv'):
-                    try:
-                        df = pd.read_csv(os.path.join(data, entry.name))
-                        if max_len  is None:
-                            max_len = len(df)
-                        pds.append(df.iloc[:max_len])  # keep only the first rows
-                    except Exception:
-                        continue
-    else:
-        if max_len is None:
-            max_len = len(data)
-        pds = data.iloc[:max_len]
-
-
-    # --- Merge all files and preprocess (interpolation, normalization, optional clustering) ---
     pds_interpolated, pds_normalized = pre_processed(
         pds,
         gap_multiplier=gap_multiplier,
@@ -111,7 +91,6 @@ def ampiimts(
         top_k_cluster=top_k_cluster,
     )
 
-    # --- Compute the matrix profile ---
     matrix_profile_result = matrix_profile(
         pds_normalized,
         n_jobs=4,
@@ -123,8 +102,82 @@ def ampiimts(
     )
 
     if visualize:
-        # --- Visualization ---
         plot_all_patterns_and_discords(pds_interpolated, matrix_profile_result)
         plot_all_motif_overlays(pds_interpolated, matrix_profile_result)
-    
+
     return pds_interpolated, pds_normalized, matrix_profile_result
+
+
+def ampiimts(
+    data: Union[str, pd.DataFrame, List[pd.DataFrame]],
+    gap_multiplier: float = 15,
+    min_std: float = 1e-2,
+    min_valid_ratio: float = 0.8,
+    alpha: float = 0.65,
+    window_size: str = None,
+    sort_by_variables: bool = False,
+    cluster: bool = True,
+    top_k_cluster: int = 4,
+    visualize: bool = True,
+    max_motifs: int = 5,
+    discord_top_pct: float = 0.04,
+    max_matches: int = 10,
+    motif: bool = False,
+    max_len: int = None,
+) -> Tuple[
+    Union[pd.DataFrame, List[pd.DataFrame]],
+    Union[pd.DataFrame, List[pd.DataFrame]],
+    Union[Dict[str, Any], List[Dict[str, Any]]]
+]:
+    """Complete motif and discord analysis pipeline."""
+
+    if isinstance(data, str) and os.path.isdir(data):
+        pds = []
+        with os.scandir(data) as entries:
+            for entry in entries:
+                if entry.is_file() and entry.name.endswith('.csv'):
+                    try:
+                        df = pd.read_csv(os.path.join(data, entry.name))
+                        pds.append(df.iloc[:max_len] if max_len else df)
+                    except Exception:
+                        continue
+        return process(
+            pds,
+            gap_multiplier,
+            min_std,
+            min_valid_ratio,
+            alpha,
+            window_size,
+            sort_by_variables,
+            cluster,
+            top_k_cluster,
+            visualize,
+            max_motifs,
+            discord_top_pct,
+            max_matches,
+            motif,
+        )
+
+    elif isinstance(data, pd.DataFrame):
+        df = data.iloc[:max_len] if max_len else data
+        return process(
+            df,
+            gap_multiplier,
+            min_std,
+            min_valid_ratio,
+            alpha,
+            window_size,
+            sort_by_variables,
+            cluster,
+            top_k_cluster,
+            visualize,
+            max_motifs,
+            discord_top_pct,
+            max_matches,
+            motif,
+        )
+
+    else:
+        raise TypeError(
+            "[ERROR] `data` must be a path to a folder, a DataFrame or a list of DataFrames."
+        )

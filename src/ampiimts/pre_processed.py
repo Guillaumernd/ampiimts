@@ -934,29 +934,15 @@ def pre_processed(
             ) if normalize else None
             return df_interpolate, df_normalize
 
-    # === Cas 2 : DataFrame unique ===
+    # === Case 2 : one DataFrame ===
     df = data
-    if cluster:
-        interpolated_df = interpolate(df.copy(), gap_multiplier=gap_multiplier, propagate_nan=False)
-        clusters = cluster_dimensions(interpolated_df, top_k=top_k_cluster, mode=mode)
-
-        group_result, group_result_normalize = [], []
-        for col_names in clusters:
-            df_cluster = df[col_names]
-            interpolated, normalized = process_group(df_cluster)
-            if interpolated is not None:
-                group_result.append(interpolated)
-            if normalized is not None:
-                group_result_normalize.append(normalized)
-        return group_result, group_result_normalize
-    else:
-        interpolated_df = interpolate(df.copy(), gap_multiplier=gap_multiplier)
-        final_ws = get_window_size(interpolated_df, len(interpolated_df))
-        normalized = normalization(
-            interpolated_df,
-            min_std=min_std,
-            min_valid_ratio=min_valid_ratio,
-            alpha=alpha,
-            window_size=final_ws
-        ) if normalize else None
-        return normalized
+    df_interpolate = interpolate(df.copy(), gap_multiplier=gap_multiplier)
+    final_ws = get_window_size(df_interpolate, len(df_interpolate))
+    df_normalize = normalization(
+        df_interpolate,
+        min_std=min_std,
+        min_valid_ratio=min_valid_ratio,
+        alpha=alpha,
+        window_size=final_ws
+    ) if normalize else None
+    return df_interpolate, df_normalize
