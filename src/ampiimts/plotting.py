@@ -329,19 +329,20 @@ def plot_all_motif_overlays(
     None
         Displays overlay figures via ``matplotlib``.
     """
-    if result is None or not result["patterns"]:
+    if result is None:
         if isinstance(df, pd.DataFrame):
             plot_motif_overlays(df, None, normalize=normalize)
         elif isinstance(df, list) and all(isinstance(d, pd.DataFrame) for d in df):
             for i, d in enumerate(df):
-                print(f"\n--- Cluster {i+1} (Window size : {result["window_size"]}) ---")
-                plot_motif_overlays(d, None, normalize=normalize)
+                if result["patterns"]:
+                    print(f"\n--- Cluster {i+1} (Window size : {result["window_size"]}) ---")
+                    plot_motif_overlays(d, None, normalize=normalize)
         else:
             raise TypeError("Unsupported df structure when result is None.")
         return
 
     # --- Cas normaux ---
-    if isinstance(df, pd.DataFrame) and isinstance(result, dict) and result["patterns"]:
+    if isinstance(df, pd.DataFrame) and isinstance(result, dict):
         plot_motif_overlays(df, result, normalize=normalize)
 
     elif isinstance(df, list) and isinstance(result, list):
