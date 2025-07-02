@@ -1,7 +1,7 @@
-"""Convenience imports for the :mod:`ampiimts` package.
+"""Expose frequently used functions at the package root.
 
-This module exposes the most commonly used functions so they can be
-imported directly from :mod:`ampiimts`.
+Importing :mod:`ampiimts` makes the main helpers available directly
+without referencing their submodules.
 """
 
 from .pre_processed import (

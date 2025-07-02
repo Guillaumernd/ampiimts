@@ -1,6 +1,7 @@
-"""
-From preprocessed signals (with original values, normalized values, and timestamps),
-identify discords and motifs using a fixed-size sliding window based on the matrix profile method (stumpy.mstump).
+"""High level pipeline for motif and discord discovery.
+
+The function reads one or several time series, preprocesses them and
+computes the matrix profile in order to detect motifs and discords.
 """
 from typing import Tuple, Union, List, Dict, Any
 from .matrix_profile import (
@@ -38,7 +39,7 @@ def ampiimts(
     Union[Dict[str, Any], List[Dict[str, Any]]]
 ]:
 
-    if os.path.isdir(data):  # ✅ Vérifie que c'est un dossier
+    if os.path.isdir(data):  # data is a directory
         pds = []
         with os.scandir(data) as entries:
             for entry in entries:
@@ -47,7 +48,7 @@ def ampiimts(
                         df = pd.read_csv(os.path.join(data, entry.name))
                         if max_len  is None:
                             max_len = len(df)
-                        pds.append(df.iloc[:max_len])  # Charge les 1000 premières lignes
+                        pds.append(df.iloc[:max_len])  # keep only the first rows
                     except Exception:
                         continue
     else:
@@ -56,8 +57,7 @@ def ampiimts(
         pds = data.iloc[:max_len]
 
 
-    # --- Merge all files into one multivariate DataFrame ---
-    # --- Preprocessing: interpolation + normalization + optional clustering ---
+    # --- Merge all files and preprocess (interpolation, normalization, optional clustering) ---
     pds_interpolated, pds_normalized = pre_processed(
         pds,
         gap_multiplier=gap_multiplier,
@@ -70,7 +70,7 @@ def ampiimts(
         top_k_cluster=top_k_cluster,
     )
 
-    # --- Compute matrix profile with clustering support ---
+    # --- Compute the matrix profile ---
     matrix_profile_result = matrix_profile(
         pds_normalized,
         n_jobs=4,

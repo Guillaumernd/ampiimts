@@ -28,37 +28,37 @@ def synchronize_on_common_grid(
     and returns a single multivariate DataFrame (columns renamed to avoid duplicates).
     """
 
-    # 1. Interpolation indépendante
+    # 1. Interpolate each DataFrame independently
     dfs = [
         interpolate(df, gap_multiplier=gap_multiplier, propagate_nan=propagate_nan)
         for df in dfs_original
     ]
     dfs = [df for df in dfs if not df.empty]
 
-    # 2. Calcul des fréquences
+    # 2. Compute sampling frequencies
     freqs = [df.index.to_series().diff().median() for df in dfs]
     freqs_seconds = [f.total_seconds() for f in freqs if pd.notna(f)]
     median_freq = np.median(freqs_seconds)
     common_freq = pd.to_timedelta(median_freq, unit="s")
 
-    # 3. Filtrer les DataFrames trop éloignés de la fréquence médiane
+    # 3. Filter DataFrames too far from the median frequency
     allowed_diff = median_freq * 0.2
     dfs_filtered = [
         df for i, df in enumerate(dfs)
         if abs(freqs_seconds[i] - median_freq) <= allowed_diff
     ]
     if len(dfs_filtered) < len(dfs):
-        print(f"[INFO] {len(dfs) - len(dfs_filtered)} DataFrame(s) ignoré(s) pour fréquence trop éloignée.")
+        print(f"[INFO] {len(dfs) - len(dfs_filtered)} DataFrame(s) ignored due to frequency mismatch.")
     dfs = dfs_filtered
 
     if not dfs:
-        raise ValueError("Aucun DataFrame ne respecte la fréquence dominante.")
+        raise ValueError("No DataFrame matches the dominant frequency.")
 
-    # 4. Vérifier si les plages temporelles sont proches (< 10% durée totale)
+    # 4. Check if time ranges are close (<10% of total duration)
     reference_ranges = [(df.index.min(), df.index.max()) for df in dfs]
     ref_start, ref_end = reference_ranges[0]
     total_duration = (ref_end - ref_start).total_seconds()
-    allowed_shift = total_duration * 0.10  # 10% de la durée
+    allowed_shift = total_duration * 0.10  # 10% of the duration
 
     time_overlaps = all(
         abs((start - ref_start).total_seconds()) <= allowed_shift and
@@ -67,7 +67,7 @@ def synchronize_on_common_grid(
     )
 
     if time_overlaps:
-        # Grille temporelle basée sur la plus courte série
+        # Use the time grid of the shortest series
         durations = [(end - start).total_seconds() for start, end in reference_ranges]
         min_idx = int(np.argmin(durations))
         min_time = dfs[min_idx].index.min()
@@ -76,7 +76,7 @@ def synchronize_on_common_grid(
         print(f"[INFO] Using aligned time grid from {min_time} to {max_time} "
               f"with freq {common_freq} based on DataFrame #{min_idx}")
     else:
-        # Grille neutre depuis 1970
+        # Neutral grid starting from 1970
         min_len = min(len(df) for df in dfs)
         reference_index = pd.date_range(
             start=pd.Timestamp("1970-01-01 00:00:00"),
@@ -86,7 +86,7 @@ def synchronize_on_common_grid(
         print(f"[INFO] No aligned ranges → Using fresh index from 1970 "
               f"with length {min_len} and frequency {common_freq}")
 
-    # 5. Reindexation et resampling sur la grille commune
+    # 5. Reindex and resample on the common grid
     dfs_synced = []
     for i, df in enumerate(dfs):
         df_interp = df.interpolate(method="time", limit=2, limit_area="inside", limit_direction="both")
@@ -95,7 +95,7 @@ def synchronize_on_common_grid(
         df_synced.index = reference_index
         dfs_synced.append(df_synced)
 
-    # 6. Concaténation multivariée
+    # 6. Concatenate into a multivariate DataFrame
     renamed_dfs = [df.add_suffix(f"_{i}") for i, df in enumerate(dfs_synced)]
     df_combined = pd.concat(renamed_dfs, axis=1)
     df_combined.index.name = "timestamp"
@@ -164,34 +164,34 @@ def interpolate(
                 df.loc[mask, col] = np.nan
         return df
 
-    # Supprimer les colonnes non numériques sauf "timestamp"
+    # Remove non-numeric columns except "timestamp"
     non_numeric_cols = df.select_dtypes(exclude=["number"]).columns
     non_numeric_cols = [col for col in non_numeric_cols if col != "timestamp"]
     df = df.drop(columns=non_numeric_cols)
 
-    # Sauvegarder les NaN d'origine
+    # Save original NaN positions
     original_nan_mask = df.isna()
 
-    # Appliquer le nettoyage par plateaux
+    # Remove plateau-like segments
     df = remove_plateau_values_globally(df)
 
-    # Identifier les NaN ajoutés par les plateaux incohérents
+    # Identify NaNs introduced by plateau removal
     new_nan_mask = df.isna() & ~original_nan_mask
 
-    # Supprimer les colonnes avec trop de NaN après suppression des plateaux
+    # Drop columns with too many NaNs after plateau removal
     min_valid_points_plateaux = int(len(df) * 0.5)
     df = df.dropna(axis=1, thresh=min_valid_points_plateaux)
 
-    # Ne garder que les colonnes restantes dans le masque
+    # Keep only remaining columns in the mask
     new_nan_mask = new_nan_mask[df.columns]
 
-    # Nettoyage index
-   # Si une colonne "timestamp" est présente, on l'utilise comme index
+    # Index cleaning
+    # Use the "timestamp" column as index if present
     if "timestamp" in df.columns:
         df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
         df = df.set_index("timestamp")
     else:
-        raise ValueError("La colonne 'timestamp' est requise pour l'interpolation.")
+        raise ValueError("The 'timestamp' column is required for interpolation.")
 
     df.index = df.index.tz_localize(None)
     df = df[df.index.notna()]
@@ -210,7 +210,7 @@ def interpolate(
     if column_thresholds is None:
         column_thresholds = estimate_column_thresholds(df)
 
-    # Outliers extrêmes
+    # Extreme outliers
     outlier_timestamps = set()
     for col in df.select_dtypes(include=[np.number]).columns:
         series = df[col]
@@ -219,12 +219,12 @@ def interpolate(
         mask = np.abs(series - center) > threshold
         outlier_timestamps.update(df.index[mask])
 
-    # Nettoyage outliers
+    # Remove outlier rows
     df_wo_outliers = df.drop(index=outlier_timestamps)
     min_valid_points = int(len(df_wo_outliers) * 0.9)
     df_wo_outliers = df_wo_outliers.dropna(axis=1, thresh=min_valid_points)
 
-    # Fréquence
+    # Estimate sampling frequency
     idx = df_wo_outliers.index.unique().sort_values()
     if len(idx) < 2:
         raise ValueError("Not enough points to estimate frequency.")
@@ -247,7 +247,7 @@ def interpolate(
 
     max_gap = freq * gap_multiplier
 
-    # Rééchantillonnage
+    # Resampling
     full_idx = pd.date_range(start=idx.min(), end=idx.max(), freq=freq)
     union_idx = idx.union(full_idx)
     df_union = df_wo_outliers.reindex(union_idx)
@@ -265,7 +265,7 @@ def interpolate(
     df_out = df_interp.reindex(full_idx)
     df_out.index.name = "timestamp"
 
-    # Grandes coupures = NaN
+    # Large gaps become NaN
     gap_mask = pd.Series(False, index=df_out.index)
     for prev, nxt in zip(idx[:-1], idx[1:]):
         if nxt - prev > max_gap:
@@ -273,7 +273,7 @@ def interpolate(
             gap_mask |= in_gap
     df_out.loc[gap_mask, :] = np.nan
 
-    # Réinjecter les NaN des outliers
+    # Reinject NaNs from outliers
     if propagate_nan:
         outlier_idx = sorted(ts for ts in outlier_timestamps if ts in df_out.index)
         df_out.loc[outlier_idx, :] = np.nan
@@ -289,7 +289,7 @@ def interpolate(
             ts_nan = df.index[mask]
             ts_nan = [ts for ts in ts_nan if ts in df_out.index]
             df_out.loc[ts_nan, col] = np.nan
-    # Réinjecter les NaN des plateaux incohérents
+    # Reinject NaNs from plateau removal
     new_nan_mask = new_nan_mask.reindex(df.index)
 
     if propagate_nan:
@@ -449,7 +449,7 @@ def normalization(
             df[col] = df[col].interpolate(method="linear", limit=3, limit_direction="both")
 
     df.attrs["m"] = window_size
-    df = df.loc[:, df.notna().sum() >= window_size]  # Au moins la taille d'une fenêtre
+    df = df.loc[:, df.notna().sum() >= window_size]  # at least the size of one window
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     any_nan_mask = df.isna().any(axis=1)
     df.loc[any_nan_mask] = np.nan
@@ -457,10 +457,10 @@ def normalization(
         if len(series) < window_size:
             return False
 
-        # Calcule combien de valeurs valides dans chaque fenêtre
+        # Count how many valid values are in each window
         valid_counts = series.rolling(window_size).count()
 
-        # Une fenêtre est valide si elle a exactement window_size valeurs non-NaN
+        # A window is valid if it contains exactly ``window_size`` non-NaN values
         valid_windows = (valid_counts == window_size).sum()
 
         total_windows = len(series) - window_size + 1
@@ -469,7 +469,7 @@ def normalization(
         return True if ratio >= min_ratio else False
 
     if not has_enough_valid_windows(df[df.columns[0]], window_size, 0.1):
-        print("[INFO] Aucune dimension avec suffisamment de fenêtres valides. → retour None")
+        print("[INFO] No dimension has enough valid windows. Returning None")
         return None
     else:
         return df
@@ -485,11 +485,10 @@ def define_m_using_clustering(
     max_segments: int = 2000,
     n_jobs: int = 8,
 ) -> list[tuple[int, str, float, float]]:
-    """
-    Détermine les meilleures tailles de fenêtre pour l'extraction de motifs
-    en se basant sur la stabilité et la densité de clusters via FAISS.
+    """Determine suitable window sizes for motif extraction using FAISS.
 
-    Cette version intègre un échantillonnage intelligent des fenêtres par variance.
+    The method evaluates candidate window lengths based on cluster stability and
+    density, relying on variance-based sampling to speed up the search.
     """
     freq = df.index.to_series().diff().median()
     if pd.isna(freq) or freq <= pd.Timedelta(0):
@@ -531,11 +530,11 @@ def define_m_using_clustering(
         if segs.shape[0] < 2:
             return None
 
-        # Échantillonnage intelligent par variance
+        # Variance-based sampling
         valid_counts = np.sum(~np.isnan(segs), axis=1)
         segs = segs[valid_counts >= 2]
         seg_var = np.nanstd(segs, axis=1, ddof=0)
-        idx_sorted = np.argsort(-seg_var)  # décroissant
+        idx_sorted = np.argsort(-seg_var)  # descending
         if len(idx_sorted) > max_segments:
             segs = segs[idx_sorted[:max_segments]]
         else:
@@ -780,11 +779,11 @@ def pre_processed(
         ) if normalize else None
         return interpolated, normalized
 
-    # === Vérification type ===
+    # === Type checking ===
     if isinstance(data, list) and not all(isinstance(x, pd.DataFrame) for x in data):
         raise TypeError("df must be a DataFrame or a list of DataFrames")
 
-    # === Cas 1 : Liste de DataFrames ===
+    # === Case 1: list of DataFrames ===
     if isinstance(data, list):
         if cluster:
             synced_dfs = synchronize_on_common_grid(data, propagate_nan=False)
