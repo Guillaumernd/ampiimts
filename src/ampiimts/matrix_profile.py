@@ -1,4 +1,4 @@
-"""Matrix profile computation helpers."""
+"""Utilities for computing matrix profiles."""
 
 from typing import List, Optional, Union
 
@@ -20,23 +20,49 @@ def matrix_profile_process(
     max_motifs: int = 3,
     discord_top_pct: float = 0.04,
     max_matches: int = 10,
-    cluster:bool = False,
-    motif:bool=False,
+    cluster: bool = False,
+    motif: bool = False,
     min_mdl_ratio: float = 0.25,
 ) -> dict:
-    """Return matrix profile related data for a single DataFrame."""
+    """Compute motif and discord information for one DataFrame.
 
-    # Copy to avoid mutating the original data
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Input dataframe containing only numeric columns.
+    window_size : int, optional
+        Sliding window size. If ``None`` the value stored in ``df.attrs['m']``
+        is used.
+    max_motifs : int
+        Maximum number of motifs to return.
+    discord_top_pct : float
+        Percentage of highest profile values considered discords.
+    max_matches : int
+        Maximum number of motif matches to retrieve.
+    cluster : bool
+        Whether the dataframe represents a clustered signal.
+    motif : bool
+        Whether motifs should be extracted in addition to discords.
+    min_mdl_ratio : float
+        Minimum ratio used when selecting dimensions with MDL.
+
+    Returns
+    -------
+    dict
+        Dictionary containing patterns, discords and the matrix profile.
+    """
+
+    # Work on a copy to avoid mutating the caller's DataFrame
     df = df.copy()
 
-    # Drop timestamp column if present, computation works on numeric values only
+    # Remove a timestamp column if present; only numeric data is required
     if "timestamp" in df.columns:
         df = df.drop(columns=["timestamp"])
 
-    # Retrieve window size from attributes if not provided
+    # Use the window size stored in the DataFrame metadata when not given
     window_size = df.attrs["m"]
  
-    # Ensure all columns are numeric
+    # Validate that all columns contain numeric data
     if not all(pd.api.types.is_numeric_dtype(df[col]) for col in df.columns):
         raise ValueError(
             "All columns must be numeric for matrix profile computation."
@@ -46,7 +72,7 @@ def matrix_profile_process(
     if df.shape[1] == 1:
         try:
                 
-            # Delegate to motif discovery helper for one variable
+            # Use the univariate motif discovery helper
             return discover_patterns_stumpy_mixed(
                 df,
                 window_size,
@@ -55,7 +81,7 @@ def matrix_profile_process(
                 max_matches=max_matches,
             )
         except ValueError as e:
-            print(f"[MatrixProfile Warning] Échec du calcul avec fenêtre {window_size} → {e}")
+            print(f"[MatrixProfile Warning] failed for window {window_size}: {e}")
             return None
 
 
@@ -73,7 +99,7 @@ def matrix_profile_process(
             min_mdl_ratio=min_mdl_ratio,
         )
     except ValueError as e:
-        print(f"[MatrixProfile Warning] Échec du calcul avec fenêtre {window_size} → {e}")
+        print(f"[MatrixProfile Warning] failed for window {window_size}: {e}")
         return None
 
 def matrix_profile(
@@ -86,13 +112,38 @@ def matrix_profile(
     motif:bool =False,
     min_mdl_ratio: float = 0.25,
 ) -> Union[dict, List[dict], List[List[dict]]]:
-    """Compute the matrix profile for one or several DataFrames."""
+    """Compute matrix profiles for one or many DataFrames.
+
+    Parameters
+    ----------
+    data : DataFrame or list
+        Either a single ``pandas.DataFrame`` or a list of DataFrames.
+    n_jobs : int
+        Number of parallel jobs used when processing multiple DataFrames.
+    max_motifs : int
+        Maximum number of motifs per profile.
+    discord_top_pct : float
+        Fraction of the highest profile values considered discords.
+    max_matches : int
+        Maximum number of matches returned per motif.
+    cluster : bool
+        Indicates whether the data came from clustering.
+    motif : bool
+        If ``True`` motifs are extracted in addition to discords.
+    min_mdl_ratio : float
+        Minimum MDL ratio when selecting dimensions.
+
+    Returns
+    -------
+    dict or list
+        Matrix profile information matching the structure of ``data``.
+    """
         
     if data is None or (isinstance(data, list) and all(x is None for x in data)):
         return None
 
     if isinstance(data, pd.DataFrame):
-        # Un seul DataFrame
+        # Single DataFrame case
         df = data
         window_size = df.attrs["m"]
 
@@ -107,7 +158,7 @@ def matrix_profile(
 
     elif isinstance(data, list) and all(isinstance(x, pd.DataFrame) for x in data):
         pds = data
-        # Liste plate de DataFrames
+        # Flat list of DataFrames
         return [
             matrix_profile_process(
                 df,

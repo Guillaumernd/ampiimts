@@ -1,6 +1,7 @@
-"""
-From preprocessed signals (with original values, normalized values, and timestamps),
-identify discords and motifs using a fixed-size sliding window based on the matrix profile method (stumpy.mstump).
+"""High level pipeline for motif and discord discovery.
+
+The function reads one or several time series, preprocesses them and
+computes the matrix profile in order to detect motifs and discords.
 """
 from typing import Tuple, Union, List, Dict, Any
 from .matrix_profile import (
@@ -37,8 +38,49 @@ def ampiimts(
     Union[pd.DataFrame, List[pd.DataFrame]],
     Union[Dict[str, Any], List[Dict[str, Any]]]
 ]:
+    """Complete motif and discord analysis pipeline.
 
-    if os.path.isdir(data):  # ✅ Vérifie que c'est un dossier
+    Parameters
+    ----------
+    data : pandas.DataFrame or list of DataFrame
+        Input dataset(s) or a path to CSV files.
+    gap_multiplier : float, optional
+        Gap multiplier used during interpolation.
+    min_std : float, optional
+        Minimum allowed standard deviation for normalization.
+    min_valid_ratio : float, optional
+        Minimum fraction of valid values in a window.
+    alpha : float, optional
+        Weight of the trend component in ASWN normalization.
+    window_size : str or None, optional
+        Sliding window size; if ``None`` it is inferred.
+    sort_by_variables : bool, optional
+        Sort variables by variance prior to clustering.
+    cluster : bool, optional
+        Whether to cluster variables before computing the profile.
+    top_k_cluster : int, optional
+        Maximum number of clusters retained.
+    visualize : bool, optional
+        If ``True`` plots of the results are shown.
+    max_motifs : int, optional
+        Maximum number of motifs to return.
+    discord_top_pct : float, optional
+        Fraction of highest profile values considered discords.
+    max_matches : int, optional
+        Maximum number of motif matches returned.
+    motif : bool, optional
+        Whether to extract motifs in addition to discords.
+    max_len : int or None, optional
+        Maximum number of rows loaded from each file.
+
+    Returns
+    -------
+    tuple
+        ``(interpolated, normalized, result)`` containing processed
+        dataframes and the matrix profile result.
+    """
+
+    if os.path.isdir(data):  # data is a directory
         pds = []
         with os.scandir(data) as entries:
             for entry in entries:
@@ -47,7 +89,7 @@ def ampiimts(
                         df = pd.read_csv(os.path.join(data, entry.name))
                         if max_len  is None:
                             max_len = len(df)
-                        pds.append(df.iloc[:max_len])  # Charge les 1000 premières lignes
+                        pds.append(df.iloc[:max_len])  # keep only the first rows
                     except Exception:
                         continue
     else:
@@ -56,8 +98,7 @@ def ampiimts(
         pds = data.iloc[:max_len]
 
 
-    # --- Merge all files into one multivariate DataFrame ---
-    # --- Preprocessing: interpolation + normalization + optional clustering ---
+    # --- Merge all files and preprocess (interpolation, normalization, optional clustering) ---
     pds_interpolated, pds_normalized = pre_processed(
         pds,
         gap_multiplier=gap_multiplier,
@@ -70,7 +111,7 @@ def ampiimts(
         top_k_cluster=top_k_cluster,
     )
 
-    # --- Compute matrix profile with clustering support ---
+    # --- Compute the matrix profile ---
     matrix_profile_result = matrix_profile(
         pds_normalized,
         n_jobs=4,
