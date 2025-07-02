@@ -338,8 +338,7 @@ def plot_motif_overlays(
     window_size = result["window_size"]
     patterns = result["patterns"]
     profile_df = result["matrix_profile"]
-    if patterns:
-        print(f"\n--- Cluster {i+1} (Window size : {window_size}) ---")
+    
     # 1) Retrieve original column names from the matrix profile
     original_cols = [col.replace("mp_dim_", "") for col in profile_df.columns]
     df = df.loc[:, original_cols]
@@ -444,38 +443,34 @@ def plot_all_motif_overlays(
     None
         Displays overlay figures via ``matplotlib``.
     """
-
-    if result is None:
+    if result is None and result["patterns"]:
         if isinstance(df, pd.DataFrame):
             plot_motif_overlays(df, None, normalize=normalize)
         elif isinstance(df, list) and all(isinstance(d, pd.DataFrame) for d in df):
             for i, d in enumerate(df):
+                print(f"\n--- Cluster {i+1} (Window size : {result["window_size"]}) ---")
                 plot_motif_overlays(d, None, normalize=normalize)
-        elif isinstance(df, list) and all(isinstance(d, list) for d in df):
-            for serie_id, serie_df_list in enumerate(df):
-                for cluster_id, d in enumerate(serie_df_list):
-                    print(f"\n--- Series {serie_id+1} · Cluster {cluster_id+1} ---")
-                    plot_motif_overlays(d, None, normalize=normalize)
         else:
             raise TypeError("Unsupported df structure when result is None.")
         return
 
     # --- Cas normaux ---
-    if isinstance(df, pd.DataFrame) and isinstance(result, dict):
+    if isinstance(df, pd.DataFrame) and isinstance(result, dict) and result["patterns"]:
         plot_motif_overlays(df, result, normalize=normalize)
 
     elif isinstance(df, list) and isinstance(result, list):
         if all(isinstance(d, pd.DataFrame) for d in df) and all(isinstance(r, dict) for r in result):
             for i, (d, r) in enumerate(zip(df, result)):
-                plot_motif_overlays(d, r, normalize=normalize)
-
-        elif all(isinstance(d, list) for d in df) and all(isinstance(r, list) for r in result):
-            for serie_id, (serie_df_list, serie_res_list) in enumerate(zip(df, result)):
-                for cluster_id, (d, r) in enumerate(zip(serie_df_list, serie_res_list)):
-                    print(f"\n--- Series {serie_id+1} · Cluster {cluster_id+1} ---")
+                if r["patterns"]:
+                    print(f"\n--- Cluster {i+1} (Window size : {r["window_size"]}) ---")
                     plot_motif_overlays(d, r, normalize=normalize)
+                else:
+                    print("No motifs")
         else:
             raise TypeError("Incompatible list structure for df and result.")
 
-    else:
+    elif not result["patterns"]:
         raise TypeError("df and result must be either DataFrame+dict, or matching lists.")
+    
+    else:
+        print("No motifs")
