@@ -15,7 +15,6 @@ from .pre_processed import (
 )
 
 from .plotting import (
-    plot_patterns_and_discords,
     plot_multidim_patterns_and_discords,
     plot_motif_overlays,
     plot_all_motif_overlays,
@@ -41,7 +40,6 @@ __all__ = [
     "normalization",
     "pre_processed",
     "define_m_using_clustering",
-    "plot_patterns_and_discords",
     "matrix_profile",
     "plot_multidim_patterns_and_discords",
     "discover_patterns_stumpy_mixed",

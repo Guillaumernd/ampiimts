@@ -329,7 +329,7 @@ def plot_all_motif_overlays(
     None
         Displays overlay figures via ``matplotlib``.
     """
-    if result is None and result["patterns"]:
+    if result is None or not result["patterns"]:
         if isinstance(df, pd.DataFrame):
             plot_motif_overlays(df, None, normalize=normalize)
         elif isinstance(df, list) and all(isinstance(d, pd.DataFrame) for d in df):
