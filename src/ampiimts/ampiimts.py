@@ -119,9 +119,9 @@ def ampiimts(
     cluster: bool = True,
     top_k_cluster: int = 4,
     visualize: bool = True,
-    max_motifs: int = 5,
+    max_motifs: int = 10,
     discord_top_pct: float = 0.04,
-    max_matches: int = 10,
+    max_matches: int = 30,
     motif: bool = False,
     max_len: int = None,
 ) -> Tuple[

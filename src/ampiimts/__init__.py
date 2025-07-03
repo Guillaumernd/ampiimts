@@ -10,7 +10,7 @@ from .pre_processed import (
     aswn_with_trend,
     normalization,
     pre_processed,
-    define_m_using_clustering,
+    define_m,
     synchronize_on_common_grid,
 )
 

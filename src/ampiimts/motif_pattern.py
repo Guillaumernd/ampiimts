@@ -7,72 +7,9 @@ import faiss
 from collections import Counter
 from typing import Optional, Union
 
-
-def exclude_discords_multi(
-    mp: Union[np.ndarray, pd.DataFrame],
-    window_size: int,
-    discord_top_pct: float = 0.04,
-    X: Optional[np.ndarray] = None,
-    max_nan_frac: float = 0.0,
-    margin: int = 0,
-) -> np.ndarray:
-    """Identify discord locations from a multivariate matrix profile.
-
-    Parameters
-    ----------
-    mp : array-like
-        Matrix profile values returned by ``mstump``.
-    window_size : int
-        Sliding window size used to compute the profile.
-    discord_top_pct : float
-        Fraction of highest profile values to keep as discords.
-    X : array-like, optional
-        Original multivariate signal (``d x n``). If provided, NaN filtering
-        and margin checks are applied.
-    max_nan_frac : float
-        Maximum allowed fraction of NaN within a candidate window.
-    margin : int
-        Distance in samples to avoid near existing NaN values.
-
-    Returns
-    -------
-    numpy.ndarray
-        Array of center indices considered discords.
-    """
-    mp = np.asarray(mp)
-    P = np.nanmean(mp, axis=0) if mp.ndim == 2 else mp.astype(float)
-
-    valid_idx = np.where(~np.isnan(P))[0]
-    candidates = []
-
-    if X is not None:
-        X = np.asarray(X, dtype=float)
-        n = X.shape[1]
-
-        for idx in valid_idx:
-            start, end = idx, idx + window_size
-            if end > n:
-                continue
-            window = X[:, start:end]
-            if np.any(np.isnan(window).mean(axis=1) > max_nan_frac):
-                continue
-            if margin > 0:
-                nan_indices = np.where(np.isnan(X))[1]
-                if np.any((nan_indices >= start - margin) & (nan_indices < end + margin)):
-                    continue
-            candidates.append(idx)
-    else:
-        candidates = valid_idx.tolist()
-
-    if not candidates:
-        return np.array([], dtype=int)
-
-    n_top = max(1, int(np.ceil(discord_top_pct * len(candidates))))
-    top_group = sorted(candidates, key=lambda i: P[i], reverse=True)[:n_top]
-    cutoff = min(P[i] for i in top_group)
-    discords = [idx for idx in candidates if P[idx] >= cutoff]
-
-    return np.array(discords) + window_size // 2
+from typing import Union, Optional
+import numpy as np
+import pandas as pd
 
 def exclude_discords(
     mp: Union[np.ndarray, pd.DataFrame],
@@ -82,51 +19,71 @@ def exclude_discords(
     max_nan_frac: float = 0.0,
     margin: int = 0,
 ) -> np.ndarray:
-    """Return centered indices of discords for univariate STUMP results.
+    """
+    Identify discord (anomalous) subsequences from a univariate or multivariate matrix profile.
+
+    This function supports the output of both `stumpy.stump` (univariate) and `stumpy.mstump` (multivariate),
+    and automatically adapts the discord selection logic. If the original time series `X` is provided, the 
+    function will apply additional filtering based on missing values (NaNs) and proximity to NaNs.
 
     Parameters
     ----------
-    mp : array-like
-        Matrix profile produced by :func:`stumpy.stump`.
+    mp : np.ndarray or pd.DataFrame
+        The matrix profile:
+            - If univariate: a 2D array (n-m+1, 4) from `stump`, or a 1D array of distances.
+            - If multivariate: a 2D array (d, n-m+1) from `mstump`.
+            - If DataFrame: assumed to contain distances in the first column.
     window_size : int
-        Sliding window size used for profile computation.
+        The sliding window size used to compute the matrix profile.
     discord_top_pct : float, optional
-        Fraction of highest profile values considered discords.
-    X : array-like, optional
-        Original signal; enables NaN filtering and margin checks.
+        The percentage of top distances to consider as discord candidates. Default is 0.04 (top 4%).
+    X : np.ndarray, optional
+        The original time series (1D or 2D) corresponding to the matrix profile. If provided,
+        the function filters out candidates overlapping with NaNs.
     max_nan_frac : float, optional
-        Maximum allowed fraction of NaN values within a window.
+        Maximum allowed fraction of NaN values within a candidate window. Default is 0.0.
     margin : int, optional
-        Minimum distance from existing NaNs.
+        Number of samples to exclude around NaNs (buffer zone). Default is 0.
 
     Returns
     -------
-    numpy.ndarray
-        Array of center indices identified as discords.
+    np.ndarray
+        An array of center indices for the selected discord windows.
     """
+
     if isinstance(mp, pd.DataFrame):
         P = mp.iloc[:, 0].values.astype(float)
     else:
         mp = np.asarray(mp)
+
         if mp.ndim == 2:
-            P = mp[:, 0].astype(float)
+            # Case: STUMP output
+            if mp.shape[1] == 4:  
+                P = np.asarray(mp[:, 0], dtype=float)
+            # Case: MSTUMP output (d, n-m+1)
+            else:  
+                P = np.nanmean(mp, axis=0)
         else:
             P = mp.astype(float)
 
-    # Ensure P is a usable float array
-    P = np.asarray(P, dtype=float)
+    if P.ndim == 2:
+        P = np.nanmean(P, axis=0)
 
     valid_idx = np.where(~np.isnan(P))[0]
     candidates = []
 
     if X is not None:
         X = np.asarray(X, dtype=float)
-        nan_indices = np.where(np.isnan(X))[0]
+        X_is_multivariate = X.ndim == 2
+        length = X.shape[1] if X_is_multivariate else X.shape[0]
+        nan_pos = np.isnan(X) if not X_is_multivariate else np.isnan(X).any(axis=0)
+        nan_indices = np.where(nan_pos)[0]
+
         for idx in valid_idx:
             start, end = idx, idx + window_size
-            if end > len(X):
+            if end > length:
                 continue
-            window = X[start:end]
+            window = X[:, start:end] if X_is_multivariate else X[start:end]
             if np.isnan(window).mean() > max_nan_frac:
                 continue
             if margin > 0 and np.any((nan_indices >= start - margin) & (nan_indices < end + margin)):
@@ -144,8 +101,6 @@ def exclude_discords(
     discords = [idx for idx in candidates if P[idx] >= cutoff]
 
     return np.array(discords) + window_size // 2
-
-
 
 def discover_patterns_stumpy_mixed(
     df: pd.DataFrame,
@@ -296,7 +251,7 @@ def discover_patterns_stumpy_mixed(
         'patterns': results,
         'matrix_profile': df_profile_with_nan,
         'discord_indices': discords,
-        'window_size': window_size
+        'window_size': df.attrs["m"],
     }
 
 
@@ -336,14 +291,13 @@ def discover_patterns_mstump_mixed(
     dict
         Dictionary with patterns, discords and the matrix profile.
     """
-       
     # 0) Setup
     X = df.to_numpy(dtype=float).T  # d × n
     d, n = X.shape
-    if d < 2:
-        raise ValueError("Il faut au moins 2 dimensions.")
+    # if d < 2:
+    #     raise ValueError("Il faut au moins 2 dimensions.")
     
-    if not cluster:
+    if not cluster and d < 2 :
         # 1) Full matrix profile
         P, I = stumpy.mstump(X, m=window_size, normalize=False, discords=False)
 
@@ -385,14 +339,14 @@ def discover_patterns_mstump_mixed(
         motif_distances, motif_indices, motif_subspaces, motif_mdls = stumpy.mmotifs(
             X, P, I,
             max_motifs=max_motifs,
-            min_neighbors=4,
+            min_neighbors=1,
             max_matches=max_matches,
             normalize=False,
         )
 
     # 5) Filtered discords
     P_disc, _ = stumpy.mstump(X, m=window_size, normalize=False, discords=True)
-    disc_idxs = exclude_discords_multi(
+    disc_idxs = exclude_discords(
         mp=P_disc,
         window_size=window_size,
         discord_top_pct=discord_top_pct,
@@ -430,35 +384,39 @@ def discover_patterns_mstump_mixed(
     # 6) Motif processing
     aligned_patterns = []
     if motif:
-        occupied = []
-        for motif_id, subspace in enumerate(motif_subspaces):
-            min_dims = max(1, int(0.40 * d))
-            if np.count_nonzero(subspace) < min_dims:
+        occupied0 = []
+        occupied1 = []
+        for motif_id, (group, subspace) in enumerate(zip(motif_indices, motif_subspaces)):
+            min_dims = max(1, int(0.30 * d))
+            # Convert scalar subspace to iterable
+            if np.isscalar(subspace) or (isinstance(subspace, np.ndarray) and subspace.ndim == 0):
+                subspace = np.array([subspace])
+
+            # Check condition
+            if len(subspace) < min_dims:
                 continue
 
+
             motif_starts = []
-            for group in motif_indices[motif_id]:
-                for idx in np.atleast_1d(group):
-                    idx = int(idx)
-                    if idx + window_size <= len(df):
-                        motif_starts.append(idx)
+            for idx in np.atleast_1d(group):
+                idx = int(idx)
+                if idx + window_size <= len(df):
+                    motif_starts.append(idx)
 
             if len(motif_starts) < 2:
                 continue
-
-            medoid_start = motif_starts[0]
 
             valid_motif_starts = []
             for s in motif_starts:
                 if any(abs(s - d0) < window_size for d0 in discords):
                     continue
                 span = (s, s + window_size)
-                if any(max(s, o[0]) < min(span[1], o[1]) for o in occupied):
+                if any(max(s, o[0]) < min(span[1], o[1]) for o in occupied0):
                     continue
                 valid_motif_starts.append(s)
-                occupied.append(span)
+                occupied0.append(span)
 
-            if len(valid_motif_starts) > 2 :
+            if len(valid_motif_starts) >= 2 :
                 segments = [
                     X[:, s : s + window_size]
                     for s in valid_motif_starts
@@ -483,20 +441,21 @@ def discover_patterns_mstump_mixed(
                     T=X,
                     normalize=False
                 )
-                distance_threshold = 0.135 * np.linalg.norm(medoid_seg)
+                # distance_threshold = 0.135 * np.linalg.norm(medoid_seg)
                 motif_starts = [
-                    int(idx) for dist, idx in matches if dist < distance_threshold]
+                    int(idx) for dist, idx in matches]
                 # Filter motifs that overlap a discord
                 motif_starts = [
                     s for s in motif_starts
                     if not any((d >= s) and (d < s + window_size) for d in discords)
                 ]
                 filtered = []
+                min_separation = int(0.25 * window_size)
                 for s in sorted(motif_starts):
-                    span = (s, s + window_size)
-                    if not any(max(s, o[0]) < min(span[1], o[1]) for o in occupied):
+                    span = (s, s + window_size)  # <--- indispensable ici
+                    if not any(abs(s - o[0]) < min_separation for o in occupied1):
                         filtered.append(s)
-                        occupied.append(span)
+                        occupied1.append(span)
 
                 if not filtered:
                     continue
@@ -509,6 +468,6 @@ def discover_patterns_mstump_mixed(
     return {
         "patterns": aligned_patterns,
         "discord_indices": discords,
-        "window_size": window_size,
+        "window_size": df.attrs["m"],
         "matrix_profile": mp_full
     }

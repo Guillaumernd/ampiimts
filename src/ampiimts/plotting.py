@@ -64,7 +64,7 @@ def plot_multidim_patterns_and_discords(
     profile_df   = result["matrix_profile"]
     mp           = profile_df.values.T
     center_dates = profile_df.index.to_pydatetime()
-    window_size  = result["window_size"]
+    window_size  = result["window_size"][1]
     discords     = result.get("discord_indices", [])
     patterns     = result.get("patterns", [])
     subspaces    = result.get("motif_subspaces", [None] * len(patterns))
@@ -217,7 +217,7 @@ def plot_motif_overlays(
         print("None matrix_profile")
         return
 
-    window_size = result["window_size"]
+    window_size = result["window_size"][1]
     patterns = result["patterns"]
     profile_df = result["matrix_profile"]
     
@@ -282,12 +282,12 @@ def plot_all_patterns_and_discords(
     if result is None:
         # Simple case
         if isinstance(df, pd.DataFrame):
-            print(f"Window size : {result['window_size']} ---")
+            print(f"Window size : {result['window_size'][0]} ---")
             plot_multidim_patterns_and_discords(df, None)
         # Flat list case
         elif isinstance(df, list) and all(isinstance(d, pd.DataFrame) for d in df):
             for i, d in enumerate(df):
-                print(f"\n--- Cluster {i+1} (Window size : {result['window_size']}) ---")
+                print(f"\n--- Cluster {i+1} (Window size : {result['window_size'][0]}) ---")
                 plot_multidim_patterns_and_discords(d, None)
         else:
             raise TypeError("Unsupported df structure when result is None.")
@@ -295,12 +295,13 @@ def plot_all_patterns_and_discords(
 
     # --- Normal cases ---
     if isinstance(df, pd.DataFrame) and isinstance(result, dict):
+        print(f"Window size : {result['window_size'][0]} ---")
         plot_multidim_patterns_and_discords(df, result, tick_step=tick_step)
 
     elif isinstance(df, list) and isinstance(result, list):
         if all(isinstance(d, pd.DataFrame) for d in df) and all(isinstance(r, dict) for r in result):
             for i, (d, r) in enumerate(zip(df, result)):
-                print(f"\n--- Cluster {i+1} (Window size : {r['window_size']}) ---")
+                print(f"\n--- Cluster {i+1} (Window size : {r['window_size'][0]}) ---")
                 plot_multidim_patterns_and_discords(d, r, tick_step=tick_step)
         else:
             raise TypeError("Incompatible list structure for df and result.")
@@ -335,7 +336,7 @@ def plot_all_motif_overlays(
         elif isinstance(df, list) and all(isinstance(d, pd.DataFrame) for d in df):
             for i, d in enumerate(df):
                 if result["patterns"]:
-                    print(f"\n--- Cluster {i+1} (Window size : {result["window_size"]}) ---")
+                    print(f"\n--- Cluster {i+1} (Window size : {result["window_size"][0]}) ---")
                     plot_motif_overlays(d, None, normalize=normalize)
         else:
             raise TypeError("Unsupported df structure when result is None.")
@@ -349,7 +350,7 @@ def plot_all_motif_overlays(
         if all(isinstance(d, pd.DataFrame) for d in df) and all(isinstance(r, dict) for r in result):
             for i, (d, r) in enumerate(zip(df, result)):
                 if r["patterns"]:
-                    print(f"\n--- Cluster {i+1} (Window size : {r["window_size"]}) ---")
+                    print(f"\n--- Cluster {i+1} (Window size : {r["window_size"][0]}) ---")
                     plot_motif_overlays(d, r, normalize=normalize)
                 else:
                     print("No motifs")

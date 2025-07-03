@@ -8,6 +8,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import AgglomerativeClustering
 from itertools import combinations
 from joblib import Parallel, delayed
+from numpy.lib.stride_tricks import sliding_window_view
 import warnings
 import numpy as np
 import pandas as pd
@@ -16,7 +17,6 @@ import faiss
 import time
 import re
 import random
-
 
 def synchronize_on_common_grid(
     dfs_original: List[pd.DataFrame],
@@ -491,24 +491,17 @@ def normalization(
         df.index = pd.to_datetime(df.index, errors="coerce")
     df = df.sort_index()
 
-    if window_size is None:
-        window_size = 50
-    elif isinstance(window_size, str):
-        window_size = int(pd.Timedelta(window_size) / df.index.to_series().diff().median())
-    elif isinstance(window_size, (int, np.integer)):
-        pass
-    else:
-        raise RuntimeError("Window size must be None, str or int")
+    window_size_int = int(pd.Timedelta(window_size) / df.index.to_series().diff().median())
 
     for col in df.columns:
         if pd.api.types.is_numeric_dtype(df[col]):
             df[col] = aswn_with_trend(
-                df[col], window_size, min_std, min_valid_ratio, alpha
+                df[col], window_size_int, min_std, min_valid_ratio, alpha
             )
             df[col] = df[col].interpolate(method="linear", limit=3, limit_direction="both")
 
-    df.attrs["m"] = window_size
-    df = df.loc[:, df.notna().sum() >= window_size]  # at least the size of one window
+    df.attrs["m"] = [window_size, window_size_int]
+    df = df.loc[:, df.notna().sum() >= window_size_int]  # at least the size of one window
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     any_nan_mask = df.isna().any(axis=1)
     df.loc[any_nan_mask] = np.nan
@@ -527,46 +520,45 @@ def normalization(
 
         return True if ratio >= min_ratio else False
 
-    if not has_enough_valid_windows(df[df.columns[0]], window_size, 0.1):
+    if not has_enough_valid_windows(df[df.columns[0]], window_size_int, 0.1):
         print("[INFO] No dimension has enough valid windows. Returning None")
         return None
     else:
         return df
 
-
-
-def define_m_using_clustering(
+def define_m(
     df: pd.DataFrame,
     k: int = 3,
     window_sizes: list[str] = None,
     max_points: int = 5000,
-    max_window_sizes: int = 5,
+    max_window_sizes: int = 15,
     max_segments: int = 2000,
     n_jobs: int = 8,
 ) -> list[tuple[int, str, float, float]]:
-    """Determine suitable window sizes for motif extraction using FAISS.
+    """
+    Determine suitable window sizes for multivariate motif extraction using FAISS.
 
     Parameters
     ----------
-    df : pandas.DataFrame
-        Input dataframe indexed by time.
-    k : int, optional
-        Number of window sizes to return.
+    df : pd.DataFrame
+        Input multivariate time series indexed by datetime.
+    k : int
+        Number of best window sizes to return.
     window_sizes : list of str, optional
-        Candidate window sizes expressed as time offsets.
-    max_points : int, optional
-        Maximum number of points sampled from ``df``.
-    max_window_sizes : int, optional
-        Maximum number of candidate window sizes evaluated.
-    max_segments : int, optional
-        Maximum number of segments used when clustering.
-    n_jobs : int, optional
-        Parallelism level for distance computations.
+        Time-based window candidates (e.g., '5s', '1min').
+    max_points : int
+        Max number of timestamps to sample from df.
+    max_window_sizes : int
+        Max number of candidate windows to evaluate.
+    max_segments : int
+        Max number of segments to keep for distance analysis.
+    n_jobs : int
+        Number of parallel jobs for window evaluation.
 
     Returns
     -------
     list of tuple
-        Each tuple contains ``(points, window_str, stability, density)``.
+        Each tuple contains: (points, window_str, stability, density)
     """
     freq = df.index.to_series().diff().median()
     if pd.isna(freq) or freq <= pd.Timedelta(0):
@@ -578,7 +570,6 @@ def define_m_using_clustering(
         pts_candidates = np.unique(
             np.round(np.logspace(np.log10(2), np.log10(max_pts), num=n_candidates)).astype(int)
         )
-
         window_sizes = [str(p * freq) for p in pts_candidates]
 
     window_sizes_pts = []
@@ -598,59 +589,90 @@ def define_m_using_clustering(
         idx = np.linspace(0, len(df) - 1, max_points, dtype=int)
         df = df.iloc[idx]
 
-    def eval_window(values: np.ndarray, ws_pts: int, ws_str: str):
-        if len(values) < ws_pts or ws_pts >= len(values):
+    num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    if not num_cols:
+        raise ValueError("No numeric columns available for clustering.")
+
+    X = df[num_cols].interpolate(limit_direction='both').bfill().ffill().values
+    
+    def eval_window_univariate(x: np.ndarray, ws_pts: int, ws_str: str):
+        if len(x) < ws_pts:
+            return None
+        segs = sliding_window_view(x, window_shape=ws_pts)  # shape (n_segments, ws_pts)
+        if segs.shape[0] < 2:
+            return None
+
+        segs = (segs - segs.mean(axis=1, keepdims=True)) / (segs.std(axis=1, keepdims=True) + 1e-8)
+        variances = np.var(segs, axis=1)
+        if np.nanmedian(variances) < 1e-6:
+            return None
+
+        idx_sorted = np.argsort(-variances)
+        segs = segs[idx_sorted[:max_segments]].astype(np.float32)
+
+        index = faiss.IndexFlatL2(ws_pts)
+        index.add(segs)
+        dists, _ = index.search(segs, 2)
+        nn = dists[:, 1]
+        if np.median(nn) == 0:
+            return None
+
+        stability = np.median(nn) / ws_pts
+        density = (nn < stability * 1.5).sum() / len(nn)
+        return (ws_pts, ws_str, stability, density)
+
+    def eval_window(X: np.ndarray, ws_pts: int, ws_str: str):
+        if X.shape[0] < ws_pts:
             return None
         try:
-            segs = np.lib.stride_tricks.sliding_window_view(values, ws_pts)
+            segs = sliding_window_view(X, window_shape=(ws_pts,), axis=0)
         except ValueError:
             return None
         if segs.shape[0] < 2:
             return None
 
-        # Variance-based sampling
-        valid_counts = np.sum(~np.isnan(segs), axis=1)
-        segs = segs[valid_counts >= 2]
-        seg_var = np.nanstd(segs, axis=1, ddof=0)
-        idx_sorted = np.argsort(-seg_var)  # descending
-        if len(idx_sorted) > max_segments:
-            segs = segs[idx_sorted[:max_segments]]
-        else:
-            segs = segs[idx_sorted]
+        segs = (segs - segs.mean(axis=1, keepdims=True)) / (segs.std(axis=1, keepdims=True) + 1e-8)
+        segs_flat = segs.reshape(segs.shape[0], -1).astype(np.float32)
 
-        segs = segs[~np.isnan(segs).any(axis=1)]
-        if len(segs) < 2:
+        variances = np.var(segs_flat, axis=1)
+        idx_sorted = np.argsort(-variances)
+        segs_flat = segs_flat[idx_sorted[:max_segments]]
+
+        if len(segs_flat) < 2:
             return None
 
-        segs = (segs - segs.mean(axis=1, keepdims=True)) / (segs.std(axis=1, keepdims=True) + 1e-8)
-        segs_f = segs.astype(np.float32)
-
-        index = faiss.IndexFlatL2(ws_pts)
-        index.add(segs_f)
-        dists, _ = index.search(segs_f, 2)
+        index = faiss.IndexFlatL2(segs_flat.shape[1])
+        index.add(segs_flat)
+        dists, _ = index.search(segs_flat, 2)
         nn = dists[:, 1]
+        if np.median(nn) == 0:
+            return None  # segments trop identiques → sans intérêt
         stability = np.median(nn) / ws_pts
         density = (nn < stability * 1.5).sum() / len(nn)
         return (ws_pts, ws_str, stability, density)
 
-    num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
-    if not num_cols:
-        raise ValueError("No numeric columns available for clustering.")
-
     results_by_ws = {ws_str: {"stability": [], "density": [], "pts": pts}
                      for pts, ws_str in window_sizes_pts}
-    for col in num_cols:
-        vals = df[col].values
+
+    if X.shape[1] == 1:
+        # Univariate
+        x = X[:, 0]
         res = Parallel(n_jobs=n_jobs)(
-            delayed(eval_window)(vals, pts, ws_str)
+            delayed(eval_window_univariate)(x, pts, ws_str)
             for pts, ws_str in window_sizes_pts
         )
-        for r in res:
-            if r is None:
-                continue
-            pts, ws_str, stab, dens = r
-            results_by_ws[ws_str]["stability"].append(stab)
-            results_by_ws[ws_str]["density"].append(dens)
+    else:
+        # Multivariate
+        res = Parallel(n_jobs=n_jobs)(
+            delayed(eval_window)(X, pts, ws_str)
+            for pts, ws_str in window_sizes_pts
+        )
+    for r in res:
+        if r is None:
+            continue
+        pts, ws_str, stab, dens = r
+        results_by_ws[ws_str]["stability"].append(stab)
+        results_by_ws[ws_str]["density"].append(dens)
 
     aggregated = []
     for ws_str, metrics in results_by_ws.items():
@@ -676,9 +698,7 @@ def define_m_using_clustering(
         random.shuffle(window_sizes_pts)
 
     aggregated.sort(key=lambda x: x[2])
-    final = aggregated[:k]
-    return final
-
+    return aggregated[:k]
 
 def cluster_dimensions(
     df: Union[pd.DataFrame, List[pd.DataFrame]],
@@ -834,6 +854,7 @@ def cluster_dimensions(
 
     return clusters
 
+
 def pre_processed(
     data: Union[pd.DataFrame, List[pd.DataFrame]],
     gap_multiplier: float = 15,
@@ -884,7 +905,7 @@ def pre_processed(
         if window_size is not None:
             return window_size
         try:
-            win_list = define_m_using_clustering(df)
+            win_list = define_m(df)
             return win_list[0][1]
         except ValueError:
             return max(2, fallback_len // 2)

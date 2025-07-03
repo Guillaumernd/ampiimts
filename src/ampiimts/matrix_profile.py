@@ -60,7 +60,7 @@ def matrix_profile_process(
         df = df.drop(columns=["timestamp"])
 
     # Use the window size stored in the DataFrame metadata when not given
-    window_size = df.attrs["m"]
+    window_size = df.attrs["m"][1]
  
     # Validate that all columns contain numeric data
     if not all(pd.api.types.is_numeric_dtype(df[col]) for col in df.columns):
@@ -71,7 +71,6 @@ def matrix_profile_process(
     # ==== UNIVARIATE ====
     if df.shape[1] == 1:
         try:
-                
             # Use the univariate motif discovery helper
             return discover_patterns_stumpy_mixed(
                 df,
@@ -145,12 +144,13 @@ def matrix_profile(
     if isinstance(data, pd.DataFrame):
         # Single DataFrame case
         df = data
-        window_size = df.attrs["m"]
+        window_size = df.attrs["m"][1]
 
         return matrix_profile_process(
             df,
             window_size=window_size,
             max_motifs=max_motifs,
+            motif=motif,
             discord_top_pct=discord_top_pct,
             max_matches=max_matches,
             cluster=cluster,
