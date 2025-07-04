@@ -1,13 +1,9 @@
 """Helper functions for motif and discord discovery."""
 
-import numpy as np
-import pandas as pd
 import stumpy
 import faiss
 from collections import Counter
 from typing import Optional, Union
-
-from typing import Union, Optional
 import numpy as np
 import pandas as pd
 

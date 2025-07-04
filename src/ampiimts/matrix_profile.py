@@ -1,10 +1,7 @@
 """Utilities for computing matrix profiles."""
 
 from typing import List, Optional, Union
-
-import numpy as np
 import pandas as pd
-import stumpy as sp
 import os
 os.environ["NUMBA_NUM_THREADS"] = "8"
 

@@ -39,7 +39,7 @@ __all__ = [
     "aswn_with_trend",
     "normalization",
     "pre_processed",
-    "define_m_using_clustering",
+    "define_m",
     "matrix_profile",
     "plot_multidim_patterns_and_discords",
     "discover_patterns_stumpy_mixed",

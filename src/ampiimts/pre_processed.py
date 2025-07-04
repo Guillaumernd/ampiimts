@@ -1,15 +1,10 @@
 """Preprocessed module for panda DataFrame with timestamp column."""
 from typing import Union, List
-from collections import Counter, defaultdict
-from scipy.cluster.hierarchy import linkage, fcluster
-from scipy.spatial.distance import squareform
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
+from collections import defaultdict
+from scipy.cluster.hierarchy import linkage
 from sklearn.cluster import AgglomerativeClustering
-from itertools import combinations
 from joblib import Parallel, delayed
 from numpy.lib.stride_tricks import sliding_window_view
-import warnings
 import numpy as np
 import pandas as pd
 from numba import njit
@@ -526,39 +521,55 @@ def normalization(
     else:
         return df
 
+@njit
+def normalize_segments(segs: np.ndarray) -> np.ndarray:
+    n, m = segs.shape
+    for i in range(n):
+        mean = 0.0
+        std = 0.0
+        for j in range(m):
+            mean += segs[i, j]
+        mean /= m
+        for j in range(m):
+            std += (segs[i, j] - mean) ** 2
+        std = (std / m) ** 0.5
+        if std < 1e-8:
+            std = 1e-8
+        for j in range(m):
+            segs[i, j] = (segs[i, j] - mean) / std
+    return segs
+
+@njit
+def compute_variances(segs: np.ndarray) -> np.ndarray:
+    n, m = segs.shape
+    variances = np.empty(n, dtype=np.float32)
+    for i in range(n):
+        mean = 0.0
+        for j in range(m):
+            mean += segs[i, j]
+        mean /= m
+        var = 0.0
+        for j in range(m):
+            var += (segs[i, j] - mean) ** 2
+        variances[i] = var / m
+    return variances
+
+@njit
+def argsort_desc(arr: np.ndarray) -> np.ndarray:
+    return np.argsort(arr)[::-1]
+
 def define_m(
     df: pd.DataFrame,
     k: int = 3,
     window_sizes: list[str] = None,
     max_points: int = 5000,
-    max_window_sizes: int = 15,
+    max_window_sizes: int = 5,
     max_segments: int = 2000,
-    n_jobs: int = 8,
+    n_jobs: int = 4,
 ) -> list[tuple[int, str, float, float]]:
     """
-    Determine suitable window sizes for multivariate motif extraction using FAISS.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Input multivariate time series indexed by datetime.
-    k : int
-        Number of best window sizes to return.
-    window_sizes : list of str, optional
-        Time-based window candidates (e.g., '5s', '1min').
-    max_points : int
-        Max number of timestamps to sample from df.
-    max_window_sizes : int
-        Max number of candidate windows to evaluate.
-    max_segments : int
-        Max number of segments to keep for distance analysis.
-    n_jobs : int
-        Number of parallel jobs for window evaluation.
-
-    Returns
-    -------
-    list of tuple
-        Each tuple contains: (points, window_str, stability, density)
+    Determine suitable window sizes for motif extraction using FAISS,
+    using univariate logic with low-bias scoring (stability prioritized).
     """
     freq = df.index.to_series().diff().median()
     if pd.isna(freq) or freq <= pd.Timedelta(0):
@@ -589,90 +600,51 @@ def define_m(
         idx = np.linspace(0, len(df) - 1, max_points, dtype=int)
         df = df.iloc[idx]
 
-    num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
-    if not num_cols:
-        raise ValueError("No numeric columns available for clustering.")
-
-    X = df[num_cols].interpolate(limit_direction='both').bfill().ffill().values
-    
-    def eval_window_univariate(x: np.ndarray, ws_pts: int, ws_str: str):
-        if len(x) < ws_pts:
-            return None
-        segs = sliding_window_view(x, window_shape=ws_pts)  # shape (n_segments, ws_pts)
-        if segs.shape[0] < 2:
-            return None
-
-        segs = (segs - segs.mean(axis=1, keepdims=True)) / (segs.std(axis=1, keepdims=True) + 1e-8)
-        variances = np.var(segs, axis=1)
-        if np.nanmedian(variances) < 1e-6:
-            return None
-
-        idx_sorted = np.argsort(-variances)
-        segs = segs[idx_sorted[:max_segments]].astype(np.float32)
-
-        index = faiss.IndexFlatL2(ws_pts)
-        index.add(segs)
-        dists, _ = index.search(segs, 2)
-        nn = dists[:, 1]
-        if np.median(nn) == 0:
-            return None
-
-        stability = np.median(nn) / ws_pts
-        density = (nn < stability * 1.5).sum() / len(nn)
-        return (ws_pts, ws_str, stability, density)
-
-    def eval_window(X: np.ndarray, ws_pts: int, ws_str: str):
-        if X.shape[0] < ws_pts:
+    def eval_window(values: np.ndarray, ws_pts: int, ws_str: str):
+        if len(values) < ws_pts or ws_pts >= len(values):
             return None
         try:
-            segs = sliding_window_view(X, window_shape=(ws_pts,), axis=0)
+            segs = np.lib.stride_tricks.sliding_window_view(values, ws_pts)
         except ValueError:
             return None
         if segs.shape[0] < 2:
             return None
 
-        segs = (segs - segs.mean(axis=1, keepdims=True)) / (segs.std(axis=1, keepdims=True) + 1e-8)
-        segs_flat = segs.reshape(segs.shape[0], -1).astype(np.float32)
-
-        variances = np.var(segs_flat, axis=1)
-        idx_sorted = np.argsort(-variances)
-        segs_flat = segs_flat[idx_sorted[:max_segments]]
-
-        if len(segs_flat) < 2:
+        segs = segs.astype(np.float32)
+        variances = compute_variances(segs)
+        idx_sorted = argsort_desc(variances)
+        segs = segs[idx_sorted[:max_segments]]
+        segs = segs[~np.isnan(segs).any(axis=1)]
+        if len(segs) < 2:
             return None
 
-        index = faiss.IndexFlatL2(segs_flat.shape[1])
-        index.add(segs_flat)
-        dists, _ = index.search(segs_flat, 2)
+        segs = normalize_segments(segs)
+        index = faiss.IndexFlatL2(ws_pts)
+        index.add(segs)
+        dists, _ = index.search(segs, 2)
         nn = dists[:, 1]
-        if np.median(nn) == 0:
-            return None  # segments trop identiques → sans intérêt
         stability = np.median(nn) / ws_pts
-        density = (nn < stability * 1.5).sum() / len(nn)
+        density = (nn < stability * 2.5).sum() / len(nn)
         return (ws_pts, ws_str, stability, density)
 
-    results_by_ws = {ws_str: {"stability": [], "density": [], "pts": pts}
-                     for pts, ws_str in window_sizes_pts}
+    num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    if not num_cols:
+        raise ValueError("No numeric columns available.")
 
-    if X.shape[1] == 1:
-        # Univariate
-        x = X[:, 0]
+    results_by_ws = {ws_str: {"stability": [], "density": [], "pts": pts} for pts, ws_str in window_sizes_pts}
+
+    for col in num_cols:
+        vals = df[col].values
         res = Parallel(n_jobs=n_jobs)(
-            delayed(eval_window_univariate)(x, pts, ws_str)
+            delayed(eval_window)(vals, pts, ws_str)
             for pts, ws_str in window_sizes_pts
         )
-    else:
-        # Multivariate
-        res = Parallel(n_jobs=n_jobs)(
-            delayed(eval_window)(X, pts, ws_str)
-            for pts, ws_str in window_sizes_pts
-        )
-    for r in res:
-        if r is None:
-            continue
-        pts, ws_str, stab, dens = r
-        results_by_ws[ws_str]["stability"].append(stab)
-        results_by_ws[ws_str]["density"].append(dens)
+        for r in res:
+            if r is None:
+                continue
+            pts, ws_str, stab, dens = r
+            results_by_ws[ws_str]["stability"].append(stab)
+            results_by_ws[ws_str]["density"].append(dens)
 
     aggregated = []
     for ws_str, metrics in results_by_ws.items():
@@ -682,23 +654,112 @@ def define_m(
         mean_dens = np.mean(metrics["density"])
         aggregated.append((metrics["pts"], ws_str, med_stab, mean_dens))
 
-    if not aggregated:
-        raise ValueError("No window size evaluated successfully.")
-
-    scores = {
-        ws_str: np.mean(m["density"]) / np.median(m["stability"])
-        for ws_str, m in results_by_ws.items() if m["stability"]
-    }
-    best_ws = max(window_sizes_pts, key=lambda tpl: scores.get(tpl[1], -np.inf))
-
-    if len(window_sizes_pts) > max_window_sizes:
-        candidates = [ws for ws in window_sizes_pts if ws != best_ws]
-        sampled = random.sample(candidates, max_window_sizes - 1)
-        window_sizes_pts = sampled + [best_ws]
-        random.shuffle(window_sizes_pts)
-
-    aggregated.sort(key=lambda x: x[2])
+    aggregated.sort(key=lambda x: x[2])  # tri par stabilité uniquement
     return aggregated[:k]
+
+
+# from typing import Union, List
+# import numpy as np
+# import pandas as pd
+# from sklearn.cluster import AgglomerativeClustering
+# from collections import defaultdict
+# import re
+# from dtaidistance import dtw
+# from tslearn.barycenters import dtw_barycenter_averaging
+
+
+# def cid_distance(s1, s2):
+#     s1_std, s2_std = np.std(s1), np.std(s2)
+#     if s1_std == 0 or s2_std == 0:
+#         return np.inf
+#     return dtw.distance_fast(s1, s2) * ((s1_std / s2_std + s2_std / s1_std) / 2)
+
+
+# def cluster_dimensions(
+#     df: Union[pd.DataFrame, List[pd.DataFrame]],
+#     group_size: int = 5,
+#     top_k: int = 4,
+#     min_std: float = 1e-2,
+#     min_valid_ratio: float = 0.8,
+#     min_cluster_size: int = 2,
+#     align: bool = True
+# ) -> List[List[str]]:
+#     """Cluster dataframe columns using DTW + CID, with optional local realignment."""
+
+#     if isinstance(df, pd.DataFrame):
+#         df_list = [df]
+#     elif isinstance(df, list) and all(isinstance(x, pd.DataFrame) for x in df):
+#         df_list = df
+#     else:
+#         raise TypeError("df must be a DataFrame or a list of DataFrames")
+
+#     clusters = []
+
+#     for base_df in df_list:
+#         base_df = base_df.select_dtypes(include=[np.number])
+
+#         valid_cols = [
+#             col for col in base_df.columns
+#             if base_df[col].std() >= min_std and base_df[col].notna().mean() >= min_valid_ratio
+#         ]
+#         if len(valid_cols) < 2:
+#             continue
+
+#         print(f"\nComputing DTW + CID distances on {len(valid_cols)} valid columns")
+#         dist_matrix = np.zeros((len(valid_cols), len(valid_cols)))
+#         for i, col1 in enumerate(valid_cols):
+#             for j, col2 in enumerate(valid_cols):
+#                 if i < j:
+#                     s1 = base_df[col1].dropna().values
+#                     s2 = base_df[col2].dropna().values
+#                     dist = cid_distance(s1, s2)
+#                     dist_matrix[i, j] = dist
+#                     dist_matrix[j, i] = dist
+
+#         # Clustering
+#         model = AgglomerativeClustering(
+#             metric='precomputed',
+#             linkage='average',
+#             distance_threshold=np.median(dist_matrix),
+#             n_clusters=None
+#         )
+#         labels = model.fit_predict(dist_matrix)
+
+#         label_map = defaultdict(list)
+#         for col, label in zip(valid_cols, labels):
+#             label_map[label].append(col)
+
+#         sorted_clusters = sorted(
+#             [cols for cols in label_map.values() if len(cols) >= min_cluster_size],
+#             key=lambda c: -np.mean([base_df[col].std() for col in c])
+#         )
+
+#         for cluster_cols in sorted_clusters:
+#             if len(clusters) >= top_k:
+#                 break
+#             if align:
+#                 print(f"\n⏩ Realigning {len(cluster_cols)} dimensions via DBA")
+#                 series_list = [base_df[col].dropna().values for col in cluster_cols]
+#                 lengths = [len(s) for s in series_list]
+#                 target_len = int(np.median(lengths))
+#                 series_resampled = [
+#                     np.interp(
+#                         np.linspace(0, len(s)-1, target_len),
+#                         np.arange(len(s)),
+#                         s
+#                     ) for s in series_list
+#                 ]
+#                 barycenter = dtw_barycenter_averaging(np.array(series_resampled))
+#                 # Optional: store barycenter or overwrite base_df[cluster_cols] with realigned data
+
+#             clusters.append(cluster_cols + ["timestamp"])
+
+#     if not clusters:
+#         print("No clusters found: data may be too noisy or too sparse.")
+
+#     return clusters
+
+
 
 def cluster_dimensions(
     df: Union[pd.DataFrame, List[pd.DataFrame]],

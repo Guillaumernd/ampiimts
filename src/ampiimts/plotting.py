@@ -4,8 +4,6 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import numpy as np
 import pandas as pd
-import seaborn as sns
-
 
 def plot_multidim_patterns_and_discords(
     df: pd.DataFrame,
