@@ -3,7 +3,11 @@
 from typing import List, Optional, Union
 import pandas as pd
 import os
-os.environ["NUMBA_NUM_THREADS"] = "8"
+import multiprocessing
+from joblib import Parallel, delayed
+
+# Use all available cores for Numba by default
+os.environ["NUMBA_NUM_THREADS"] = str(multiprocessing.cpu_count())
 
 from .motif_pattern import (
     discover_patterns_stumpy_mixed,
@@ -100,7 +104,7 @@ def matrix_profile_process(
 
 def matrix_profile(
     data: Union[pd.DataFrame, List[pd.DataFrame], List[List[pd.DataFrame]]],
-    n_jobs: int = 4,
+    n_jobs: Optional[int] = None,
     max_motifs: int = 5,
     discord_top_pct: float = 0.04,
     max_matches: int = 10,
@@ -114,8 +118,9 @@ def matrix_profile(
     ----------
     data : DataFrame or list
         Either a single ``pandas.DataFrame`` or a list of DataFrames.
-    n_jobs : int
-        Number of parallel jobs used when processing multiple DataFrames.
+    n_jobs : int or None
+        Number of parallel jobs used when processing multiple DataFrames. If
+        ``None`` all available CPU cores are used.
     max_motifs : int
         Maximum number of motifs per profile.
     discord_top_pct : float
@@ -134,6 +139,10 @@ def matrix_profile(
     dict or list
         Matrix profile information matching the structure of ``data``.
     """
+
+    # Determine the number of jobs to use
+    if n_jobs is None or n_jobs < 1:
+        n_jobs = multiprocessing.cpu_count()
         
     if data is None or (isinstance(data, list) and all(x is None for x in data)):
         return None
@@ -155,9 +164,9 @@ def matrix_profile(
 
     elif isinstance(data, list) and all(isinstance(x, pd.DataFrame) for x in data):
         pds = data
-        # Flat list of DataFrames
-        return [
-            matrix_profile_process(
+        # Flat list of DataFrames processed in parallel
+        return Parallel(n_jobs=n_jobs)(
+            delayed(matrix_profile_process)(
                 df,
                 max_motifs=max_motifs,
                 discord_top_pct=discord_top_pct,
@@ -167,6 +176,28 @@ def matrix_profile(
                 min_mdl_ratio=min_mdl_ratio,
             )
             for df in pds
+        )
+
+    elif (
+        isinstance(data, list)
+        and all(isinstance(group, list) for group in data)
+        and all(all(isinstance(df, pd.DataFrame) for df in group) for group in data)
+    ):
+        # Nested list of DataFrames (e.g., clustered output)
+        return [
+            Parallel(n_jobs=n_jobs)(
+                delayed(matrix_profile_process)(
+                    df,
+                    max_motifs=max_motifs,
+                    discord_top_pct=discord_top_pct,
+                    max_matches=max_matches,
+                    cluster=cluster,
+                    motif=motif,
+                    min_mdl_ratio=min_mdl_ratio,
+                )
+                for df in group
+            )
+            for group in data
         ]
 
     else:

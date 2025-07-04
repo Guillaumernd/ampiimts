@@ -93,7 +93,7 @@ def process(
 
     matrix_profile_result = matrix_profile(
         pds_normalized,
-        n_jobs=4,
+        n_jobs=os.cpu_count(),
         max_motifs=max_motifs,
         discord_top_pct=discord_top_pct,
         max_matches=max_matches,

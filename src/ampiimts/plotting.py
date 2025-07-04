@@ -334,7 +334,7 @@ def plot_all_motif_overlays(
         elif isinstance(df, list) and all(isinstance(d, pd.DataFrame) for d in df):
             for i, d in enumerate(df):
                 if result["patterns"]:
-                    print(f"\n--- Cluster {i+1} (Window size : {result["window_size"][0]}) ---")
+                    print(f"\n--- Cluster {i+1} (Window size : {result['window_size'][0]}) ---")
                     plot_motif_overlays(d, None, normalize=normalize)
         else:
             raise TypeError("Unsupported df structure when result is None.")
@@ -348,7 +348,7 @@ def plot_all_motif_overlays(
         if all(isinstance(d, pd.DataFrame) for d in df) and all(isinstance(r, dict) for r in result):
             for i, (d, r) in enumerate(zip(df, result)):
                 if r["patterns"]:
-                    print(f"\n--- Cluster {i+1} (Window size : {r["window_size"][0]}) ---")
+                    print(f"\n--- Cluster {i+1} (Window size : {r['window_size'][0]}) ---")
                     plot_motif_overlays(d, r, normalize=normalize)
                 else:
                     print("No motifs")

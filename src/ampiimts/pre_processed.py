@@ -7,6 +7,7 @@ from joblib import Parallel, delayed
 from numpy.lib.stride_tricks import sliding_window_view
 import numpy as np
 import pandas as pd
+import os
 from numba import njit
 import faiss
 import time
@@ -170,6 +171,8 @@ def interpolate(
         Interpolated dataframe indexed by timestamp.
     """
     df = df_origine.copy()
+    if df.empty:
+        raise ValueError("Not enough points")
     
     def remove_plateau_values_globally(df: pd.DataFrame, min_duration=5) -> pd.DataFrame:
         df = df.copy()
@@ -199,9 +202,9 @@ def interpolate(
         return df
 
     # Remove non-numeric columns except "timestamp"
+    # Preserve non-numeric columns except for an existing timestamp column
     non_numeric_cols = df.select_dtypes(exclude=["number"]).columns
     non_numeric_cols = [col for col in non_numeric_cols if col != "timestamp"]
-    df = df.drop(columns=non_numeric_cols)
 
     # Save original NaN positions
     original_nan_mask = df.isna()
@@ -220,10 +223,12 @@ def interpolate(
     new_nan_mask = new_nan_mask[df.columns]
 
     # Index cleaning
-    # Use the "timestamp" column as index if present
+    # Use the "timestamp" column as index if present, otherwise fall back to the current index
     if "timestamp" in df.columns:
         df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
         df = df.set_index("timestamp")
+    elif isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.to_datetime(df.index, errors="coerce")
     else:
         raise ValueError("The 'timestamp' column is required for interpolation.")
 
@@ -486,7 +491,15 @@ def normalization(
         df.index = pd.to_datetime(df.index, errors="coerce")
     df = df.sort_index()
 
-    window_size_int = int(pd.Timedelta(window_size) / df.index.to_series().diff().median())
+    freq = df.index.to_series().diff().median()
+    if pd.isna(freq) or freq <= pd.Timedelta(0):
+        freq = pd.Timedelta(seconds=1)
+
+    if window_size is None:
+        window_size_int = max(2, len(df) // 10)
+        window_size = pd.tseries.frequencies.to_offset(freq * window_size_int).freqstr
+    else:
+        window_size_int = max(1, int(pd.Timedelta(window_size) / freq))
 
     for col in df.columns:
         if pd.api.types.is_numeric_dtype(df[col]):
@@ -496,7 +509,8 @@ def normalization(
             df[col] = df[col].interpolate(method="linear", limit=3, limit_direction="both")
 
     df.attrs["m"] = [window_size, window_size_int]
-    df = df.loc[:, df.notna().sum() >= window_size_int]  # at least the size of one window
+    if (df.notna().sum() >= window_size_int).any():
+        df = df.loc[:, df.notna().sum() >= window_size_int]
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     any_nan_mask = df.isna().any(axis=1)
     df.loc[any_nan_mask] = np.nan
@@ -516,8 +530,8 @@ def normalization(
         return True if ratio >= min_ratio else False
 
     if not has_enough_valid_windows(df[df.columns[0]], window_size_int, 0.1):
-        print("[INFO] No dimension has enough valid windows. Returning None")
-        return None
+        print("[INFO] No dimension has enough valid windows. Returning input DataFrame")
+        return df
     else:
         return df
 
@@ -565,12 +579,15 @@ def define_m(
     max_points: int = 5000,
     max_window_sizes: int = 5,
     max_segments: int = 2000,
-    n_jobs: int = 4,
+    n_jobs: int = None,
 ) -> list[tuple[int, str, float, float]]:
     """
     Determine suitable window sizes for motif extraction using FAISS,
     using univariate logic with low-bias scoring (stability prioritized).
     """
+    if n_jobs is None or n_jobs < 1:
+        n_jobs = os.cpu_count() or 1
+
     freq = df.index.to_series().diff().median()
     if pd.isna(freq) or freq <= pd.Timedelta(0):
         freq = pd.Timedelta(seconds=1)
@@ -967,7 +984,7 @@ def pre_processed(
             return window_size
         try:
             win_list = define_m(df)
-            return win_list[0][1]
+            return win_list[0][1] if win_list else max(2, fallback_len // 2)
         except ValueError:
             return max(2, fallback_len // 2)
 
@@ -1013,8 +1030,8 @@ def pre_processed(
                 min_valid_ratio=min_valid_ratio,
                 alpha=alpha,
                 window_size=final_ws
-            ) if normalize else None
-            return df_interpolate, df_normalize
+            ) if normalize else df_interpolate
+            return df_normalize
 
     # === Case 2 : one DataFrame ===
     df = data
@@ -1026,5 +1043,5 @@ def pre_processed(
         min_valid_ratio=min_valid_ratio,
         alpha=alpha,
         window_size=final_ws
-    ) if normalize else None
-    return df_interpolate, df_normalize
+    ) if normalize else df_interpolate
+    return df_normalize
