@@ -761,9 +761,11 @@ def define_m(
 
 
 
+
+
 def cluster_dimensions(
     df: Union[pd.DataFrame, List[pd.DataFrame]],
-    group_size: int = 5,
+    group_size: int = 6,
     top_k: int = 4,
     min_std: float = 1e-2,
     min_valid_ratio: float = 0.8,
@@ -868,7 +870,7 @@ def cluster_dimensions(
         for cluster_cols in sorted_clusters:
             if len(clusters) >= top_k:
                 break
-            clusters.append(cluster_cols + ["timestamp"])
+            clusters.append(cluster_cols[:group_size] + ["timestamp"])
 
         # === Correlation between each cluster and the remaining columns ===
         print("\n[CLUSTERING]")
@@ -925,9 +927,9 @@ def pre_processed(
     window_size: str = None,
     sort_by_variables: bool = True,
     cluster: bool = False,
-    normalize: bool = True,
     mode: str = 'hybrid',
     top_k_cluster: int = 4,
+    group_size: int = 6,
 ) -> Union[pd.DataFrame, List[pd.DataFrame], List[List[pd.DataFrame]]]:
     """Interpolate and normalize one or several time series.
 
@@ -949,12 +951,12 @@ def pre_processed(
         Sort columns by variance before clustering.
     cluster : bool, optional
         Whether to perform clustering.
-    normalize : bool, optional
-        Apply normalization after interpolation.
     mode : {'motif', 'discord', 'hybrid'}, optional
         Mode passed to :func:`cluster_dimensions`.
     top_k_cluster : int, optional
         Maximum number of clusters retained.
+    group_size : int, optional
+        Target group size for hierarchical clustering.
 
     Returns
     -------
@@ -967,7 +969,7 @@ def pre_processed(
             return window_size
         try:
             win_list = define_m(df)
-            return win_list[0][1]
+            return win_list[0][1] if win_list else max(2, fallback_len // 2)
         except ValueError:
             return max(2, fallback_len // 2)
 
@@ -982,7 +984,7 @@ def pre_processed(
             min_valid_ratio=min_valid_ratio,
             alpha=alpha,
             window_size=final_ws
-        ) if normalize else None
+        ) 
         return interpolated, normalized
 
     # === Type checking ===
@@ -993,7 +995,7 @@ def pre_processed(
     if isinstance(data, list):
         if cluster:
             synced_dfs = synchronize_on_common_grid(data, propagate_nan=False)
-            clustered_groups = cluster_dimensions(synced_dfs, top_k=top_k_cluster, mode=mode)
+            clustered_groups = cluster_dimensions(synced_dfs, top_k=top_k_cluster, mode=mode, group_size=group_size)
 
             group_result, group_result_normalize = [], []
             for col_names in sorted(clustered_groups):
@@ -1013,7 +1015,7 @@ def pre_processed(
                 min_valid_ratio=min_valid_ratio,
                 alpha=alpha,
                 window_size=final_ws
-            ) if normalize else None
+            ) 
             return df_interpolate, df_normalize
 
     # === Case 2 : one DataFrame ===
@@ -1026,5 +1028,5 @@ def pre_processed(
         min_valid_ratio=min_valid_ratio,
         alpha=alpha,
         window_size=final_ws
-    ) if normalize else None
+    ) 
     return df_interpolate, df_normalize

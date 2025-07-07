@@ -125,6 +125,8 @@ def discover_patterns_stumpy_mixed(
     dict
         Dictionary containing patterns, discords and the matrix profile.
     """
+    #column name 
+    col_name = df.columns[0]  
 
     # Retrieve the single value column regardless of its name
     if df.shape[1] != 1:
@@ -150,8 +152,9 @@ def discover_patterns_stumpy_mixed(
     nan_pad = np.full(window_size // 2, np.nan)
     df_profile_with_nan = pd.DataFrame(
     np.concatenate([nan_pad, df_profile['value'].values, nan_pad]).astype(float),
-    columns=['value']
+    columns=[col_name]
     )
+
 
     df_profile_with_nan.index = df.index[:len(df_profile_with_nan)]
 
@@ -437,7 +440,7 @@ def discover_patterns_mstump_mixed(
                     T=X,
                     normalize=False
                 )
-                # distance_threshold = 0.135 * np.linalg.norm(medoid_seg)
+                distance_threshold = 0.135 * np.linalg.norm(medoid_seg)
                 motif_starts = [
                     int(idx) for dist, idx in matches]
                 # Filter motifs that overlap a discord

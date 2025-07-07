@@ -32,6 +32,7 @@ def process(
     discord_top_pct: float = 0.04,
     max_matches: int = 10,
     motif: bool = False,
+    group_size: int = 6,
 ) -> Tuple[
     Union[pd.DataFrame, List[pd.DataFrame]],
     Union[pd.DataFrame, List[pd.DataFrame]],
@@ -71,7 +72,8 @@ def process(
         Whether to extract motifs in addition to discords.
     max_len : int or None, optional
         Maximum number of rows loaded from each file.
-
+    group_size : int, optional
+        Target group size for hierarchical clustering.
     Returns
     -------
     tuple
@@ -89,6 +91,7 @@ def process(
         sort_by_variables=sort_by_variables,
         cluster=cluster,
         top_k_cluster=top_k_cluster,
+        group_size=group_size,
     )
 
     matrix_profile_result = matrix_profile(
@@ -124,6 +127,7 @@ def ampiimts(
     max_matches: int = 30,
     motif: bool = False,
     max_len: int = None,
+    group_size: int = 6,
 ) -> Tuple[
     Union[pd.DataFrame, List[pd.DataFrame]],
     Union[pd.DataFrame, List[pd.DataFrame]],
@@ -156,6 +160,7 @@ def ampiimts(
             discord_top_pct,
             max_matches,
             motif,
+            group_size,
         )
 
     elif isinstance(data, pd.DataFrame):
@@ -175,6 +180,7 @@ def ampiimts(
             discord_top_pct,
             max_matches,
             motif,
+            group_size,
         )
 
     else:
