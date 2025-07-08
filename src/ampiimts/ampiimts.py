@@ -33,6 +33,7 @@ def process(
     max_matches: int = 10,
     motif: bool = False,
     group_size: int = 6,
+    display_info: bool = False,
 ) -> Tuple[
     Union[pd.DataFrame, List[pd.DataFrame]],
     Union[pd.DataFrame, List[pd.DataFrame]],
@@ -74,6 +75,8 @@ def process(
         Maximum number of rows loaded from each file.
     group_size : int, optional
         Target group size for hierarchical clustering.
+    display_info : bool, optional
+        Display informations about data.
     Returns
     -------
     tuple
@@ -92,6 +95,7 @@ def process(
         cluster=cluster,
         top_k_cluster=top_k_cluster,
         group_size=group_size,
+        display_info=display_info,
     )
 
     matrix_profile_result = matrix_profile(
@@ -101,7 +105,7 @@ def process(
         discord_top_pct=discord_top_pct,
         max_matches=max_matches,
         cluster=cluster,
-        motif=motif
+        motif=motif,
     )
 
     if visualize:
@@ -127,7 +131,8 @@ def ampiimts(
     max_matches: int = 30,
     motif: bool = False,
     max_len: int = None,
-    group_size: int = 6,
+    group_size: int = None,
+    display_info: bool = False,
 ) -> Tuple[
     Union[pd.DataFrame, List[pd.DataFrame]],
     Union[pd.DataFrame, List[pd.DataFrame]],
@@ -161,6 +166,7 @@ def ampiimts(
             max_matches,
             motif,
             group_size,
+            display_info,
         )
 
     elif isinstance(data, pd.DataFrame):
@@ -181,6 +187,7 @@ def ampiimts(
             max_matches,
             motif,
             group_size,
+            display_info,
         )
 
     else:

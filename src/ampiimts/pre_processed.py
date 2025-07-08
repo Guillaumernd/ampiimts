@@ -17,6 +17,8 @@ def synchronize_on_common_grid(
     dfs_original: List[pd.DataFrame],
     gap_multiplier: float = 15,
     propagate_nan: bool = True,
+    display_info: bool = False,
+
 ) -> pd.DataFrame:
     """Synchronize several time series on a common timestamp grid.
 
@@ -54,7 +56,7 @@ def synchronize_on_common_grid(
         df for i, df in enumerate(dfs)
         if abs(freqs_seconds[i] - median_freq) <= allowed_diff
     ]
-    if len(dfs_filtered) < len(dfs):
+    if len(dfs_filtered) < len(dfs) and verb:
         print(f"[INFO] {len(dfs) - len(dfs_filtered)} DataFrame(s) ignored due to frequency mismatch.")
     dfs = dfs_filtered
 
@@ -80,7 +82,8 @@ def synchronize_on_common_grid(
         min_time = dfs[min_idx].index.min()
         max_time = dfs[min_idx].index.max()
         reference_index = pd.date_range(start=min_time, end=max_time, freq=common_freq)
-        print(f"[INFO] Using aligned time grid from {min_time} to {max_time} "
+        if display_info:
+            print(f"[INFO] Using aligned time grid from {min_time} to {max_time} "
               f"with freq {common_freq} based on DataFrame #{min_idx}")
     else:
         # Neutral grid starting from 1970
@@ -255,7 +258,7 @@ def interpolate(
 
     # Remove outlier rows
     df_wo_outliers = df.drop(index=outlier_timestamps)
-    min_valid_points = int(len(df_wo_outliers) * 0.9)
+    min_valid_points = int(len(df_wo_outliers) * 0.5)
     df_wo_outliers = df_wo_outliers.dropna(axis=1, thresh=min_valid_points)
 
     # Estimate sampling frequency
@@ -456,7 +459,7 @@ def aswn_with_trend(
 def normalization(
     df: pd.DataFrame,
     min_std: float = 1e-2,
-    min_valid_ratio: float = 0.8,
+    min_valid_ratio: float = 0.5,
     alpha: float = 0.65,
     window_size: str = None,
 ) -> pd.DataFrame:
@@ -515,7 +518,7 @@ def normalization(
 
         return True if ratio >= min_ratio else False
 
-    if not has_enough_valid_windows(df[df.columns[0]], window_size_int, 0.1):
+    if not has_enough_valid_windows(df[df.columns[0]], window_size_int, 0.5):
         print("[INFO] No dimension has enough valid windows. Returning None")
         return None
     else:
@@ -657,112 +660,6 @@ def define_m(
     aggregated.sort(key=lambda x: x[2])  # tri par stabilité uniquement
     return aggregated[:k]
 
-
-# from typing import Union, List
-# import numpy as np
-# import pandas as pd
-# from sklearn.cluster import AgglomerativeClustering
-# from collections import defaultdict
-# import re
-# from dtaidistance import dtw
-# from tslearn.barycenters import dtw_barycenter_averaging
-
-
-# def cid_distance(s1, s2):
-#     s1_std, s2_std = np.std(s1), np.std(s2)
-#     if s1_std == 0 or s2_std == 0:
-#         return np.inf
-#     return dtw.distance_fast(s1, s2) * ((s1_std / s2_std + s2_std / s1_std) / 2)
-
-
-# def cluster_dimensions(
-#     df: Union[pd.DataFrame, List[pd.DataFrame]],
-#     group_size: int = 5,
-#     top_k: int = 4,
-#     min_std: float = 1e-2,
-#     min_valid_ratio: float = 0.8,
-#     min_cluster_size: int = 2,
-#     align: bool = True
-# ) -> List[List[str]]:
-#     """Cluster dataframe columns using DTW + CID, with optional local realignment."""
-
-#     if isinstance(df, pd.DataFrame):
-#         df_list = [df]
-#     elif isinstance(df, list) and all(isinstance(x, pd.DataFrame) for x in df):
-#         df_list = df
-#     else:
-#         raise TypeError("df must be a DataFrame or a list of DataFrames")
-
-#     clusters = []
-
-#     for base_df in df_list:
-#         base_df = base_df.select_dtypes(include=[np.number])
-
-#         valid_cols = [
-#             col for col in base_df.columns
-#             if base_df[col].std() >= min_std and base_df[col].notna().mean() >= min_valid_ratio
-#         ]
-#         if len(valid_cols) < 2:
-#             continue
-
-#         print(f"\nComputing DTW + CID distances on {len(valid_cols)} valid columns")
-#         dist_matrix = np.zeros((len(valid_cols), len(valid_cols)))
-#         for i, col1 in enumerate(valid_cols):
-#             for j, col2 in enumerate(valid_cols):
-#                 if i < j:
-#                     s1 = base_df[col1].dropna().values
-#                     s2 = base_df[col2].dropna().values
-#                     dist = cid_distance(s1, s2)
-#                     dist_matrix[i, j] = dist
-#                     dist_matrix[j, i] = dist
-
-#         # Clustering
-#         model = AgglomerativeClustering(
-#             metric='precomputed',
-#             linkage='average',
-#             distance_threshold=np.median(dist_matrix),
-#             n_clusters=None
-#         )
-#         labels = model.fit_predict(dist_matrix)
-
-#         label_map = defaultdict(list)
-#         for col, label in zip(valid_cols, labels):
-#             label_map[label].append(col)
-
-#         sorted_clusters = sorted(
-#             [cols for cols in label_map.values() if len(cols) >= min_cluster_size],
-#             key=lambda c: -np.mean([base_df[col].std() for col in c])
-#         )
-
-#         for cluster_cols in sorted_clusters:
-#             if len(clusters) >= top_k:
-#                 break
-#             if align:
-#                 print(f"\n⏩ Realigning {len(cluster_cols)} dimensions via DBA")
-#                 series_list = [base_df[col].dropna().values for col in cluster_cols]
-#                 lengths = [len(s) for s in series_list]
-#                 target_len = int(np.median(lengths))
-#                 series_resampled = [
-#                     np.interp(
-#                         np.linspace(0, len(s)-1, target_len),
-#                         np.arange(len(s)),
-#                         s
-#                     ) for s in series_list
-#                 ]
-#                 barycenter = dtw_barycenter_averaging(np.array(series_resampled))
-#                 # Optional: store barycenter or overwrite base_df[cluster_cols] with realigned data
-
-#             clusters.append(cluster_cols + ["timestamp"])
-
-#     if not clusters:
-#         print("No clusters found: data may be too noisy or too sparse.")
-
-#     return clusters
-
-
-
-
-
 def cluster_dimensions(
     df: Union[pd.DataFrame, List[pd.DataFrame]],
     group_size: int = 6,
@@ -770,7 +667,8 @@ def cluster_dimensions(
     min_std: float = 1e-2,
     min_valid_ratio: float = 0.8,
     min_cluster_size: int = 2,
-    mode: str = 'hybrid'  # 'motif', 'discord', 'hybrid'
+    mode: str = 'hybrid',
+    display_info: bool = False,
 ) -> List[List[str]]:
     """Cluster dataframe columns based on temporal coherence.
 
@@ -796,7 +694,6 @@ def cluster_dimensions(
     list of list of str
         Clustered column names including the ``timestamp`` column.
     """
-
     if isinstance(df, pd.DataFrame):
         df_list = [df]
     elif isinstance(df, list) and all(isinstance(x, pd.DataFrame) for x in df):
@@ -819,10 +716,14 @@ def cluster_dimensions(
         if len(valid_cols) < 2:
             continue
 
-        # Correlation matrix
+        # 1. Normalisation z-score
+        base_df[valid_cols] = (
+            base_df[valid_cols] - base_df[valid_cols].mean()
+        ) / base_df[valid_cols].std()
+
+        # 2. Matrice de distance
         corr = base_df[valid_cols].corr()
 
-        # Distance depending on the chosen mode
         if mode == 'motif':
             dist = 1 - corr.pow(2).abs()
         elif mode == 'discord':
@@ -832,13 +733,10 @@ def cluster_dimensions(
 
         dist = dist.fillna(1.0)
 
-        # Mean distance used for dynamic threshold
         tril_values = dist.where(np.tril(np.ones(dist.shape), -1).astype(bool)).stack()
         mean_dist = tril_values.mean()
         std_dist = tril_values.std()
-        distance_threshold = mean_dist - 0.2 * std_dist
-
-        # Hierarchical clustering
+        distance_threshold = mean_dist - 0.3 * std_dist
         model = AgglomerativeClustering(
             metric='precomputed',
             linkage='average',
@@ -847,12 +745,10 @@ def cluster_dimensions(
         )
         labels = model.fit_predict(dist.values)
 
-        # Build clusters
         label_map = {}
         for col, label in zip(valid_cols, labels):
             label_map.setdefault(label, []).append(col)
 
-        # Average coherence function used for sorting
         def avg_corr(cols):
             if len(cols) < 2:
                 return 0
@@ -860,9 +756,15 @@ def cluster_dimensions(
             tril = matrix.where(np.tril(np.ones(matrix.shape), -1).astype(bool))
             return tril.stack().mean()
 
-        # Sort clusters
+        # 🔍 Nouvelle fonction : diversité de familles
+        def diverse_enough(cols):
+            families = set(re.sub(r"_(\d+)$", "", c) for c in cols)
+            return len(families) > 1
+
         sorted_clusters = sorted(
-            [c for c in label_map.values() if len(c) >= min_cluster_size],
+            [c for c in label_map.values()
+             if len(c) >= min_cluster_size and diverse_enough(c)
+            ],
             key=avg_corr,
             reverse=True
         )
@@ -871,10 +773,9 @@ def cluster_dimensions(
             if len(clusters) >= top_k:
                 break
             clusters.append(cluster_cols[:group_size] + ["timestamp"])
-
-        # === Correlation between each cluster and the remaining columns ===
-        print("\n[CLUSTERING]")
-        print("\n Cross correlation between columns in each clusters :")
+        if display_info:
+            print("\n[CLUSTERING]")
+            print("\n Cross correlation between columns in each clusters :")
 
         for i, cluster in enumerate(clusters):
             cluster_vars = [col for col in cluster if col != "timestamp"]
@@ -886,36 +787,37 @@ def cluster_dimensions(
             sub_corr = base_df[cluster_vars + others].corr().loc[cluster_vars, others]
             mean_cross_corr = sub_corr.abs().mean().mean()
             print(f"    Cluster {i+1:02d} ({len(cluster_vars)} variables) correlation = {mean_cross_corr:.3f}")
+        
+        if display_info:
+            print("\n Correlation between parameters in sensors :")
 
-        # === Correlation between sensor families ===
-        print("\n Correlation between parameters in sensors :")
+            family_map = defaultdict(list)
+            for col in base_df.columns:
+                if col == "timestamp":
+                    continue
+                match = re.match(r"(.*?)(?:_\d+)?$", col)
+                if match:
+                    family = match.group(1)
+                    family_map[family].append(col)
 
-        # Group by sensor family (before the trailing underscore)
-        family_map = defaultdict(list)
-        for col in base_df.columns:
-            if col == "timestamp":
-                continue
-            match = re.match(r"(.*?)(?:_\d+)?$", col)
-            if match:
-                family = match.group(1)
-                family_map[family].append(col)
+            family_names = sorted(family_map)
+            family_corr = pd.DataFrame(index=family_names, columns=family_names, dtype=float)
 
-        family_names = sorted(family_map)
-        family_corr = pd.DataFrame(index=family_names, columns=family_names, dtype=float)
+            for f1 in family_names:
+                for f2 in family_names:
+                    cols1, cols2 = family_map[f1], family_map[f2]
+                    sub_corr = base_df[cols1 + cols2].corr().loc[cols1, cols2]
+                    mean_corr = sub_corr.abs().mean().mean()
+                    family_corr.loc[f1, f2] = mean_corr
 
-        for f1 in family_names:
-            for f2 in family_names:
-                cols1, cols2 = family_map[f1], family_map[f2]
-                sub_corr = base_df[cols1 + cols2].corr().loc[cols1, cols2]
-                mean_corr = sub_corr.abs().mean().mean()
-                family_corr.loc[f1, f2] = mean_corr
+            print(f"{family_corr.round(2)}")
 
-        print(f"{family_corr.round(2)}")
-    print("\n")
+            print("\n")
     if not clusters:
         print("Skipping DataFrame: not enough rich dimensions — too much noise, constant values, or missing data.")
 
     return clusters
+
 
 
 def pre_processed(
@@ -930,6 +832,7 @@ def pre_processed(
     mode: str = 'hybrid',
     top_k_cluster: int = 4,
     group_size: int = 6,
+    display_info: bool = False,
 ) -> Union[pd.DataFrame, List[pd.DataFrame], List[List[pd.DataFrame]]]:
     """Interpolate and normalize one or several time series.
 
@@ -994,8 +897,8 @@ def pre_processed(
     # === Case 1: list of DataFrames ===
     if isinstance(data, list):
         if cluster:
-            synced_dfs = synchronize_on_common_grid(data, propagate_nan=False)
-            clustered_groups = cluster_dimensions(synced_dfs, top_k=top_k_cluster, mode=mode, group_size=group_size)
+            synced_dfs = synchronize_on_common_grid(data, propagate_nan=False, display_info=display_info)
+            clustered_groups = cluster_dimensions(synced_dfs, top_k=top_k_cluster, mode=mode, group_size=group_size, display_info=display_info)
 
             group_result, group_result_normalize = [], []
             for col_names in sorted(clustered_groups):
@@ -1007,7 +910,7 @@ def pre_processed(
                     group_result_normalize.append(normalized)
             return group_result, group_result_normalize
         else:
-            df_interpolate = synchronize_on_common_grid(data, propagate_nan=True)
+            df_interpolate = synchronize_on_common_grid(data, propagate_nan=True, display_info=display_info)
             final_ws = get_window_size(df_interpolate, len(df_interpolate))
             df_normalize = normalization(
                 df_interpolate,

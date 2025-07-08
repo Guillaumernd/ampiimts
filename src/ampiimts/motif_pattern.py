@@ -440,30 +440,29 @@ def discover_patterns_mstump_mixed(
                     T=X,
                     normalize=False
                 )
-                distance_threshold = 0.135 * np.linalg.norm(medoid_seg)
+                distance_threshold = 0.30 * np.linalg.norm(medoid_seg)
                 motif_starts = [
-                    int(idx) for dist, idx in matches]
+                    int(idx) for dist, idx in matches if dist < distance_threshold]
                 # Filter motifs that overlap a discord
                 motif_starts = [
                     s for s in motif_starts
                     if not any((d >= s) and (d < s + window_size) for d in discords)
                 ]
                 filtered = []
-                min_separation = int(0.25 * window_size)
+                min_separation = int(0.4 * window_size)
                 for s in sorted(motif_starts):
                     span = (s, s + window_size)  # <--- indispensable ici
                     if not any(abs(s - o[0]) < min_separation for o in occupied1):
                         filtered.append(s)
                         occupied1.append(span)
 
-                if not filtered:
-                    continue
+                if len(filtered) > 1:
+                    aligned_patterns.append({
+                        "pattern_label": f"mmotif_{motif_id + 1}",
+                        "medoid_idx": medoid_start,
+                        "motif_indices_debut": filtered
+                    })
 
-                aligned_patterns.append({
-                    "pattern_label": f"mmotif_{motif_id + 1}",
-                    "medoid_idx": medoid_start,
-                    "motif_indices_debut": filtered
-                })
     return {
         "patterns": aligned_patterns,
         "discord_indices": discords,
