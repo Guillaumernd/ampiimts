@@ -2,10 +2,12 @@
 
 import stumpy
 import faiss
-from collections import Counter
+from collections import Counter, defaultdict
 from typing import Optional, Union
 import numpy as np
 import pandas as pd
+import re
+
 
 def exclude_discords(
     mp: Union[np.ndarray, pd.DataFrame],
@@ -263,6 +265,7 @@ def discover_patterns_mstump_mixed(
     min_mdl_ratio: float = 0.25,
     cluster: bool = False,
     motif: bool = False,
+    most_stable_only: bool = False,
 ) -> dict:
     """Discover motifs and discords on multivariate signals.
 
@@ -284,6 +287,8 @@ def discover_patterns_mstump_mixed(
         ``True`` if the dataframe represents clustered signals.
     motif : bool, optional
         ``True`` to extract motifs in addition to discords.
+    most_stable_only : bool, optional
+        ``True`` to extract the most stable sensor
 
     Returns
     -------
@@ -343,18 +348,8 @@ def discover_patterns_mstump_mixed(
             normalize=False,
         )
 
-    # 5) Filtered discords
+    # 5) Calculate discords
     P_disc, _ = stumpy.mstump(X, m=window_size, normalize=False, discords=True)
-    disc_idxs = exclude_discords(
-        mp=P_disc,
-        window_size=window_size,
-        discord_top_pct=discord_top_pct,
-        X=X,
-        max_nan_frac=0.1,
-        margin=10
-    )
-    discords = sorted(disc_idxs)
-
 
     # Centered matrix profile
     profile_len = n - window_size + 1
@@ -378,7 +373,79 @@ def discover_patterns_mstump_mixed(
         index=df.index[:n],  # return to original length
         columns=mp_df.columns
     )
+    mp_full.replace([np.inf, -np.inf], np.nan, inplace=True)
 
+    if most_stable_only:
+        suffix_groups = defaultdict(list)
+        for col in df.columns:
+            match = re.match(r"(.*)_(\d+)$", col)
+            if match:
+                suffix = match.group(2)
+                suffix_groups[suffix].append(col)
+
+        suffix_scores = {}
+
+        for suffix, cols in suffix_groups.items():
+            mp_cols = [f"mp_dim_{col}" for col in cols if f"mp_dim_{col}" in mp_full.columns]
+
+            valid_values = []
+            for mp_col in mp_cols:
+                values = mp_full[mp_col].dropna()
+                mean_val = values.mean()
+                if np.isfinite(mean_val):  
+                    valid_values.append(mean_val)
+
+            suffix_scores[suffix] = np.mean(valid_values)
+
+        # Identify the below average
+        best_suffix = min(suffix_scores, key=suffix_scores.get)
+
+        # Keep only columns of the most stable sensor
+        best_columns = suffix_groups[best_suffix]
+        df = df[best_columns]
+        
+        # Update X and matrix_profile
+        X = df.to_numpy(dtype=float).T
+        d, n = X.shape
+        P_disc, _ = stumpy.mstump(X, m=window_size, normalize=False, discords=True)
+
+        # Update mp_full
+        profile_len = n - window_size + 1
+        center_idx = np.arange(profile_len) + window_size // 2
+        mp_df = pd.DataFrame(
+            data=P_disc.T,
+            index=df.index[center_idx],
+            columns=[f"mp_dim_{col}" for col in df.columns]
+        )
+        nan_start = np.full((window_size // 2, mp_df.shape[1]), np.nan)
+        nan_end = np.full((window_size - window_size // 2 - 1, mp_df.shape[1]), np.nan)
+        mp_full = pd.DataFrame(
+            np.vstack([nan_start, mp_df.values, nan_end]),
+            index=df.index[:n],
+            columns=mp_df.columns
+        )
+        
+        # update motif
+        if motif:
+            P, I = stumpy.mstump(X, m=window_size, normalize=False, discords=False)
+            motif_distances, motif_indices, motif_subspaces, motif_mdls = stumpy.mmotifs(
+                X, P, I,
+                max_motifs=max_motifs,
+                min_neighbors=1,
+                max_matches=max_matches,
+                normalize=False,
+            )
+
+    # Filtered discords
+    disc_idxs = exclude_discords(
+        mp=P_disc,
+        window_size=window_size,
+        discord_top_pct=discord_top_pct,
+        X=X,
+        max_nan_frac=0.1,
+        margin=10
+    )
+    discords = sorted(disc_idxs)
 
     # 6) Motif processing
     aligned_patterns = []
@@ -462,7 +529,6 @@ def discover_patterns_mstump_mixed(
                         "medoid_idx": medoid_start,
                         "motif_indices_debut": filtered
                     })
-
     return {
         "patterns": aligned_patterns,
         "discord_indices": discords,

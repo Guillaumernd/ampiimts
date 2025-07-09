@@ -20,6 +20,7 @@ def matrix_profile_process(
     cluster: bool = False,
     motif: bool = False,
     min_mdl_ratio: float = 0.25,
+    most_stable_only: bool = False,
 ) -> dict:
     """Compute motif and discord information for one DataFrame.
 
@@ -42,6 +43,8 @@ def matrix_profile_process(
         Whether motifs should be extracted in addition to discords.
     min_mdl_ratio : float
         Minimum ratio used when selecting dimensions with MDL.
+    most_stable_only : bool, optional
+        ``True`` to extract the most stable sensor
 
     Returns
     -------
@@ -93,6 +96,7 @@ def matrix_profile_process(
             cluster=cluster,
             motif=motif,
             min_mdl_ratio=min_mdl_ratio,
+            most_stable_only=most_stable_only,
         )
     except ValueError as e:
         print(f"[MatrixProfile Warning] failed for window {window_size}: {e}")
@@ -107,6 +111,8 @@ def matrix_profile(
     cluster:bool = False,
     motif:bool =False,
     min_mdl_ratio: float = 0.25,
+    most_stable_only: bool = False,
+
 ) -> Union[dict, List[dict], List[List[dict]]]:
     """Compute matrix profiles for one or many DataFrames.
 
@@ -128,6 +134,8 @@ def matrix_profile(
         If ``True`` motifs are extracted in addition to discords.
     min_mdl_ratio : float
         Minimum MDL ratio when selecting dimensions.
+    most_stable_only : bool, optional
+        ``True`` to extract the most stable sensor
 
     Returns
     -------
@@ -151,6 +159,7 @@ def matrix_profile(
             discord_top_pct=discord_top_pct,
             max_matches=max_matches,
             cluster=cluster,
+            most_stable_only=most_stable_only,
         )
 
     elif isinstance(data, list) and all(isinstance(x, pd.DataFrame) for x in data):
@@ -165,6 +174,7 @@ def matrix_profile(
                 cluster=cluster,
                 motif=motif,
                 min_mdl_ratio=min_mdl_ratio,
+                most_stable_only=most_stable_only,
             )
             for df in pds
         ]

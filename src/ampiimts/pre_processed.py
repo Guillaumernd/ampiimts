@@ -99,7 +99,7 @@ def synchronize_on_common_grid(
     # 5. Reindex and resample on the common grid
     dfs_synced = []
     for i, df in enumerate(dfs):
-        df_interp = df.interpolate(method="time", limit=2, limit_area="inside", limit_direction="both")
+        df_interp = df.interpolate(method="time", limit=gap_multiplier, limit_area="inside", limit_direction="both")
         df_synced = df_interp.resample(common_freq).mean()
         df_synced = df_synced.iloc[:len(reference_index)]
         df_synced.index = reference_index
@@ -296,7 +296,11 @@ def interpolate(
     seg_union = seg_index.reindex(union_idx, method="ffill").fillna(0).astype(int)
 
     df_interp = df_union.groupby(seg_union, group_keys=False).apply(
-        lambda seg: seg.interpolate(method="time", limit_direction="both")
+        lambda seg: seg.interpolate(method="time", 
+                                        limit=gap_multiplier,
+                                        limit_direction="both", 
+                                        limit_area="inside",
+                                    )
     )
 
     df_out = df_interp.reindex(full_idx)
@@ -462,6 +466,7 @@ def normalization(
     min_valid_ratio: float = 0.5,
     alpha: float = 0.65,
     window_size: str = None,
+    gap_multiplier: int = 15,
 ) -> pd.DataFrame:
     """Apply ASWN normalization with trend correction.
 
@@ -477,6 +482,8 @@ def normalization(
         Trend blending coefficient (0 to 1).
     window_size : str or None, optional
         Window size string or number of samples. ``None`` uses a default.
+    gap_multiplier : float, optional
+        Gap multiplier for interpolation.
 
     Returns
     -------
@@ -496,7 +503,7 @@ def normalization(
             df[col] = aswn_with_trend(
                 df[col], window_size_int, min_std, min_valid_ratio, alpha
             )
-            df[col] = df[col].interpolate(method="linear", limit=3, limit_direction="both")
+            df[col] = df[col].interpolate(method="linear", limit=gap_multiplier, limit_direction="both", limit_area="inside")
 
     df.attrs["m"] = [window_size, window_size_int]
     df = df.loc[:, df.notna().sum() >= window_size_int]  # at least the size of one window
@@ -886,7 +893,8 @@ def pre_processed(
             min_std=min_std,
             min_valid_ratio=min_valid_ratio,
             alpha=alpha,
-            window_size=final_ws
+            window_size=final_ws,
+            gap_multiplier=gap_multiplier,
         ) 
         return interpolated, normalized
 
@@ -897,7 +905,7 @@ def pre_processed(
     # === Case 1: list of DataFrames ===
     if isinstance(data, list):
         if cluster:
-            synced_dfs = synchronize_on_common_grid(data, propagate_nan=False, display_info=display_info)
+            synced_dfs = synchronize_on_common_grid(data, propagate_nan=False, display_info=display_info, gap_multiplier=gap_multiplier)
             clustered_groups = cluster_dimensions(synced_dfs, top_k=top_k_cluster, mode=mode, group_size=group_size, display_info=display_info)
 
             group_result, group_result_normalize = [], []

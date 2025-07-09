@@ -34,6 +34,7 @@ def process(
     motif: bool = False,
     group_size: int = 6,
     display_info: bool = False,
+    most_stable_only: bool = False,
 ) -> Tuple[
     Union[pd.DataFrame, List[pd.DataFrame]],
     Union[pd.DataFrame, List[pd.DataFrame]],
@@ -77,6 +78,9 @@ def process(
         Target group size for hierarchical clustering.
     display_info : bool, optional
         Display informations about data.
+    most_stable_only : bool, optional
+        ``True`` to extract the most stable sensor
+        
     Returns
     -------
     tuple
@@ -106,6 +110,7 @@ def process(
         max_matches=max_matches,
         cluster=cluster,
         motif=motif,
+        most_stable_only=most_stable_only,
     )
 
     if visualize:
@@ -133,6 +138,7 @@ def ampiimts(
     max_len: int = None,
     group_size: int = None,
     display_info: bool = False,
+    most_stable_only: bool = False,
 ) -> Tuple[
     Union[pd.DataFrame, List[pd.DataFrame]],
     Union[pd.DataFrame, List[pd.DataFrame]],
@@ -167,6 +173,7 @@ def ampiimts(
             motif,
             group_size,
             display_info,
+            most_stable_only,
         )
 
     elif isinstance(data, pd.DataFrame):
@@ -188,6 +195,7 @@ def ampiimts(
             motif,
             group_size,
             display_info,
+            most_stable_only
         )
 
     else:
