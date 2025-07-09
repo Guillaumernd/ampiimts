@@ -12,6 +12,7 @@ from .pre_processed import (
     pre_processed,
     define_m,
     synchronize_on_common_grid,
+    interpolate_all_columns_by_similarity,
 )
 
 from .plotting import (
@@ -40,6 +41,7 @@ __all__ = [
     "normalization",
     "pre_processed",
     "define_m",
+    "interpolate_all_columns_by_similarity",
     "matrix_profile",
     "plot_multidim_patterns_and_discords",
     "discover_patterns_stumpy_mixed",

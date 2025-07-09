@@ -9,6 +9,7 @@ from .matrix_profile import (
 )
 from .pre_processed import (
     pre_processed,
+    interpolate_all_columns_by_similarity,
 )
 from .plotting import (
     plot_all_patterns_and_discords,
@@ -35,6 +36,7 @@ def process(
     group_size: int = 6,
     display_info: bool = False,
     most_stable_only: bool = False,
+    smart_interpolation: bool = True,
 ) -> Tuple[
     Union[pd.DataFrame, List[pd.DataFrame]],
     Union[pd.DataFrame, List[pd.DataFrame]],
@@ -80,6 +82,9 @@ def process(
         Display informations about data.
     most_stable_only : bool, optional
         ``True`` to extract the most stable sensor
+    smart_interpolation : bool, optional
+        interpolation with matrix_profile via other
+        similar sensors
         
     Returns
     -------
@@ -88,7 +93,7 @@ def process(
         dataframes and the matrix profile result.
     """
 
-    pds_interpolated, pds_normalized = pre_processed(
+    pds_interpolated, pds_normalized, pds_normalized_without_nan = pre_processed(
         pds,
         gap_multiplier=gap_multiplier,
         min_std=min_std,
@@ -100,7 +105,10 @@ def process(
         top_k_cluster=top_k_cluster,
         group_size=group_size,
         display_info=display_info,
+        smart_interpolation=smart_interpolation
     )
+    most_stable_only2 = True if most_stable_only and smart_interpolation else False
+    most_stable_only = True if not smart_interpolation and most_stable_only else False
 
     matrix_profile_result = matrix_profile(
         pds_normalized,
@@ -112,6 +120,23 @@ def process(
         motif=motif,
         most_stable_only=most_stable_only,
     )
+
+    if smart_interpolation:
+        pds_normalized = interpolate_all_columns_by_similarity(
+            pds=pds_normalized_without_nan,
+            matrix_profiles=matrix_profile_result,
+        )
+            
+        matrix_profile_result = matrix_profile(
+            pds_normalized,
+            n_jobs=4,
+            max_motifs=max_motifs,
+            discord_top_pct=discord_top_pct,
+            max_matches=max_matches,
+            cluster=cluster,
+            motif=motif,
+            most_stable_only=most_stable_only2,
+        )
 
     if visualize:
         plot_all_patterns_and_discords(pds_interpolated, matrix_profile_result)
@@ -139,6 +164,7 @@ def ampiimts(
     group_size: int = None,
     display_info: bool = False,
     most_stable_only: bool = False,
+    smart_interpolation: bool = True,
 ) -> Tuple[
     Union[pd.DataFrame, List[pd.DataFrame]],
     Union[pd.DataFrame, List[pd.DataFrame]],
@@ -174,6 +200,7 @@ def ampiimts(
             group_size,
             display_info,
             most_stable_only,
+            smart_interpolation,
         )
 
     elif isinstance(data, pd.DataFrame):
@@ -195,7 +222,8 @@ def ampiimts(
             motif,
             group_size,
             display_info,
-            most_stable_only
+            most_stable_only,
+            smart_interpolation,
         )
 
     else:

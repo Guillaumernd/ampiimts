@@ -442,7 +442,7 @@ def discover_patterns_mstump_mixed(
         window_size=window_size,
         discord_top_pct=discord_top_pct,
         X=X,
-        max_nan_frac=0.1,
+        max_nan_frac=0.05,
         margin=10
     )
     discords = sorted(disc_idxs)

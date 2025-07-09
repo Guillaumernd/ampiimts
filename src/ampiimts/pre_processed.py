@@ -296,7 +296,7 @@ def interpolate(
     seg_union = seg_index.reindex(union_idx, method="ffill").fillna(0).astype(int)
 
     df_interp = df_union.groupby(seg_union, group_keys=False).apply(
-        lambda seg: seg.interpolate(method="time", 
+        lambda seg: seg.interpolate(method="time",
                                         limit=gap_multiplier,
                                         limit_direction="both", 
                                         limit_area="inside",
@@ -467,6 +467,7 @@ def normalization(
     alpha: float = 0.65,
     window_size: str = None,
     gap_multiplier: int = 15,
+    propagate_nan:bool = True
 ) -> pd.DataFrame:
     """Apply ASWN normalization with trend correction.
 
@@ -484,6 +485,8 @@ def normalization(
         Window size string or number of samples. ``None`` uses a default.
     gap_multiplier : float, optional
         Gap multiplier for interpolation.
+    propagate_nan : bool, optional
+        Reinject NaN values introduced during cleaning steps.
 
     Returns
     -------
@@ -506,10 +509,11 @@ def normalization(
             df[col] = df[col].interpolate(method="linear", limit=gap_multiplier, limit_direction="both", limit_area="inside")
 
     df.attrs["m"] = [window_size, window_size_int]
-    df = df.loc[:, df.notna().sum() >= window_size_int]  # at least the size of one window
+    df = df.loc[:, df.notna().sum() >= window_size_int]  # at least the size of one window        
     numeric_cols = df.select_dtypes(include=[np.number]).columns
-    any_nan_mask = df.isna().any(axis=1)
-    df.loc[any_nan_mask] = np.nan
+    if propagate_nan:
+        any_nan_mask = df.isna().any(axis=1)
+        df.loc[any_nan_mask] = np.nan
     def has_enough_valid_windows(series, window_size, min_ratio):
         if len(series) < window_size:
             return False
@@ -840,6 +844,7 @@ def pre_processed(
     top_k_cluster: int = 4,
     group_size: int = 6,
     display_info: bool = False,
+    smart_interpolation: bool = True,
 ) -> Union[pd.DataFrame, List[pd.DataFrame], List[List[pd.DataFrame]]]:
     """Interpolate and normalize one or several time series.
 
@@ -867,6 +872,9 @@ def pre_processed(
         Maximum number of clusters retained.
     group_size : int, optional
         Target group size for hierarchical clustering.
+    smart_interpolation : bool, optional
+        interpolation with matrix_profile via other
+        similar sensors
 
     Returns
     -------
@@ -883,10 +891,10 @@ def pre_processed(
         except ValueError:
             return max(2, fallback_len // 2)
 
-    def process_group(df_group):
+    def process_group(df_group, smart_interpolation):
         interpolated = interpolate(df_group, gap_multiplier=gap_multiplier)
         if interpolated.empty:
-            return None, None
+            return None, None, None
         final_ws = get_window_size(interpolated, len(interpolated))
         normalized = normalization(
             interpolated,
@@ -896,7 +904,19 @@ def pre_processed(
             window_size=final_ws,
             gap_multiplier=gap_multiplier,
         ) 
-        return interpolated, normalized
+        if smart_interpolation:
+            normalized_whithout_inter = normalization(
+                interpolated,
+                min_std=min_std,
+                min_valid_ratio=min_valid_ratio,
+                alpha=alpha,
+                window_size=final_ws,
+                gap_multiplier=gap_multiplier,
+                propagate_nan = False,
+            ) 
+        else:
+            normalized_whithout_inter = None
+        return interpolated, normalized, normalized_whithout_inter
 
     # === Type checking ===
     if isinstance(data, list) and not all(isinstance(x, pd.DataFrame) for x in data):
@@ -908,15 +928,17 @@ def pre_processed(
             synced_dfs = synchronize_on_common_grid(data, propagate_nan=False, display_info=display_info, gap_multiplier=gap_multiplier)
             clustered_groups = cluster_dimensions(synced_dfs, top_k=top_k_cluster, mode=mode, group_size=group_size, display_info=display_info)
 
-            group_result, group_result_normalize = [], []
+            group_result, group_result_normalize, group_result_normalize_whithout_Nan = [], [], []
             for col_names in sorted(clustered_groups):
                 df_cluster = synced_dfs.reset_index()[col_names]
-                interpolated, normalized = process_group(df_cluster)
+                interpolated, normalized, normalized_whithout_inter = process_group(df_cluster, smart_interpolation)
                 if interpolated is not None:
                     group_result.append(interpolated)
                 if normalized is not None:
                     group_result_normalize.append(normalized)
-            return group_result, group_result_normalize
+                if normalized_whithout_inter is not None:
+                    group_result_normalize_whithout_Nan.append(normalized_whithout_inter)
+            return group_result, group_result_normalize, group_result_normalize_whithout_Nan
         else:
             df_interpolate = synchronize_on_common_grid(data, propagate_nan=True, display_info=display_info)
             final_ws = get_window_size(df_interpolate, len(df_interpolate))
@@ -927,7 +949,7 @@ def pre_processed(
                 alpha=alpha,
                 window_size=final_ws
             ) 
-            return df_interpolate, df_normalize
+            return df_interpolate, df_normalize, None
 
     # === Case 2 : one DataFrame ===
     df = data
@@ -940,4 +962,111 @@ def pre_processed(
         alpha=alpha,
         window_size=final_ws
     ) 
-    return df_interpolate, df_normalize
+    return df_interpolate, df_normalize, None
+
+
+def interpolate_from_matrix_profile(
+    df: pd.DataFrame,
+    matrix_profile: pd.DataFrame,
+    top_k: int = 3,
+    min_valid_ratio: float = 0.5,
+) -> pd.DataFrame:
+    """
+    Interpole toutes les colonnes manquantes à partir des colonnes similaires
+    (ayant le même préfixe) en se basant sur leur matrix profile déjà calculé.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Données d'origine.
+    matrix_profile : pd.DataFrame
+        Matrix profile centré (index = timestamps, colonnes = "mp_dim_<col>").
+    top_k : int
+        Nombre de colonnes similaires à utiliser pour interpoler.
+    min_valid_ratio : float
+        Seuil minimal de points communs valides.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame avec les colonnes interpolées.
+    """
+    df_result = df.copy()
+    matrix_profile = matrix_profile["matrix_profile"]
+    for target_col in df.columns:
+        if df[target_col].isna().any():
+
+            if f"mp_dim_{target_col}" not in matrix_profile.columns:
+                continue
+
+            prefix = target_col.split("_")[0]
+            candidates = [
+                col for col in df.columns
+                if col.startswith(prefix)
+                and col != target_col
+                and f"mp_dim_{col}" in matrix_profile.columns
+            ]
+
+            if not candidates:
+                continue
+
+            target_mp = matrix_profile[f"mp_dim_{target_col}"]
+
+            scores = {}
+            for col in candidates:
+                mp_col = matrix_profile[f"mp_dim_{col}"]
+
+                valid = target_mp.notna() & mp_col.notna()
+                if valid.mean() < min_valid_ratio:
+                    continue
+
+                score = np.mean(np.abs(target_mp[valid] - mp_col[valid]))
+                scores[col] = score
+
+            if not scores:
+                continue
+
+            best_cols = sorted(scores, key=scores.get)[:top_k]
+
+            fill_values = df[best_cols].mean(axis=1, skipna=True)
+            result = df[target_col].copy()
+            result[result.isna()] = fill_values[result.isna()]
+            df_result[target_col] = result
+
+    return df_result
+
+
+    
+def interpolate_all_columns_by_similarity(
+    pds,
+    matrix_profiles,
+    top_k: int = 3,
+    min_valid_ratio: float = 0.5,
+) -> Union[pd.DataFrame, List[pd.DataFrame]]:
+    """
+    Interpolate missing values in all columns based on similarity in matrix profile.
+
+    Parameters
+    ----------
+    pds : pd.DataFrame or list of pd.DataFrame
+        Input time series or clustered time series.
+    matrix_profiles : pd.DataFrame or list of pd.DataFrame
+        Corresponding matrix profiles (1:1 with df if list).
+    top_k : int
+        Number of most similar signals to use for interpolation.
+    min_valid_ratio : float
+        Threshold to ignore columns with too few valid points.
+
+    Returns
+    -------
+    pd.DataFrame or list of pd.DataFrame
+        Interpolated time series.
+    """
+    # Cas multiple (liste de clusters)
+    interpolated_clusters = []
+    for df, matrix_profile in zip(pds, matrix_profiles):
+        interpolated = interpolate_from_matrix_profile(
+            df, matrix_profile, top_k, min_valid_ratio
+        )
+        interpolated_clusters.append(interpolated)
+    return interpolated_clusters
