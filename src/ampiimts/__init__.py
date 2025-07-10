@@ -22,15 +22,21 @@ from .plotting import (
     plot_all_patterns_and_discords,
 )
 
-from .matrix_profile import matrix_profile
+from .matrix_profile import (
+    matrix_profile,
+    matrix_profile_process,
+)
 
 from .motif_pattern import (
     discover_patterns_stumpy_mixed,
     discover_patterns_mstump_mixed,
+    exclude_discords,
+    compute_univariate_matrix_profiles,
 )
 
 from .ampiimts import (
-    ampiimts
+    ampiimts,
+    process
 )
 
 __all__ = [
@@ -50,4 +56,8 @@ __all__ = [
     "plot_all_motif_overlays",
     "plot_all_patterns_and_discords",
     "ampiimts",
+    "process",
+    "matrix_profile_process",
+    "exclude_discords",
+    "compute_univariate_matrix_profiles",
 ]
