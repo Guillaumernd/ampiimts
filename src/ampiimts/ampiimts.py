@@ -38,6 +38,7 @@ def process(
     most_stable_only: bool = False,
     smart_interpolation: bool = True,
     printunidimensional: bool = False,
+    only_heat_map: bool = True,
 ) -> Tuple[
     Union[pd.DataFrame, List[pd.DataFrame]],
     Union[pd.DataFrame, List[pd.DataFrame]],
@@ -88,8 +89,9 @@ def process(
         similar sensors
     printunidimensional : bool, optional
         See unidimensional matri_profil
+    only_heatmap : bool, optional
+        only print heatmap
 
-        
     Returns
     -------
     tuple
@@ -147,7 +149,7 @@ def process(
         )
 
     if visualize:
-        plot_all_patterns_and_discords(pds_interpolated, matrix_profile_result)
+        plot_all_patterns_and_discords(pds_interpolated, matrix_profile_result, only_heat_map=only_heat_map)
         plot_all_motif_overlays(pds_interpolated, matrix_profile_result)
 
     return pds_interpolated, pds_normalized, matrix_profile_result
@@ -174,6 +176,7 @@ def ampiimts(
     most_stable_only: bool = False,
     smart_interpolation: bool = True,
     printunidimensional: bool = False,
+    only_heatmap: bool = True,
 ) -> Tuple[
     Union[pd.DataFrame, List[pd.DataFrame]],
     Union[pd.DataFrame, List[pd.DataFrame]],

@@ -7,6 +7,8 @@ from typing import Optional, Union
 import numpy as np
 import pandas as pd
 import re
+import warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 
 def exclude_discords(

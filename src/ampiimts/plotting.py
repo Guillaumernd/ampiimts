@@ -9,6 +9,7 @@ def plot_multidim_patterns_and_discords(
     df: pd.DataFrame,
     result: dict | None,
     tick_step: int = 500,
+    only_heat_map: bool = True,
 ) -> None:
     """
     Plot:
@@ -81,65 +82,66 @@ def plot_multidim_patterns_and_discords(
         else:
             pattern_dims.append(set(np.where(np.atleast_1d(sp))[0]))
 
-    # === FIGURE 1: Timeseries Plots ============================================
-    fig1, axs = plt.subplots(
-        n_dim, 1,
-        figsize=(20, n_dim * 3),
-        sharex=True,
-    )
-    if n_dim == 1:
-        axs = [axs]
+    if not only_heat_map:
+        # === FIGURE 1: Timeseries Plots ============================================
+        fig1, axs = plt.subplots(
+            n_dim, 1,
+            figsize=(20, n_dim * 3),
+            sharex=True,
+        )
+        if n_dim == 1:
+            axs = [axs]
 
-    for dim, col in enumerate(df.columns):
-        ax = axs[dim]
-        ax.plot(df.index, df[col], color="black", label=col, linewidth=0.8)
+        for dim, col in enumerate(df.columns):
+            ax = axs[dim]
+            ax.plot(df.index, df[col], color="black", label=col, linewidth=0.8)
 
-        # Rescale MP to data range
-        mp_series = mp[dim]
-        mp_series = np.where(np.isinf(mp_series), np.nan, mp_series)
-        valid = ~np.isnan(mp_series)
-        mp_rescaled = np.full_like(mp_series, np.nan)
+            # Rescale MP to data range
+            mp_series = mp[dim]
+            mp_series = np.where(np.isinf(mp_series), np.nan, mp_series)
+            valid = ~np.isnan(mp_series)
+            mp_rescaled = np.full_like(mp_series, np.nan)
 
-        if valid.any():
-            mp_min = np.nanmin(mp_series)
-            mp_max = np.nanmax(mp_series)
-            denom = mp_max - mp_min
-            if denom > 0:
-                mp_rescaled[valid] = (mp_series[valid] - mp_min) / denom
-            else:
-                mp_rescaled[valid] = 0
+            if valid.any():
+                mp_min = np.nanmin(mp_series)
+                mp_max = np.nanmax(mp_series)
+                denom = mp_max - mp_min
+                if denom > 0:
+                    mp_rescaled[valid] = (mp_series[valid] - mp_min) / denom
+                else:
+                    mp_rescaled[valid] = 0
 
-            mp_rescaled = mp_rescaled * (df[col].max() - df[col].min()) + df[col].min()
-            ax.plot(center_dates, mp_rescaled, color="blue", alpha=0.8, label="Matrix Profile")
+                mp_rescaled = mp_rescaled * (df[col].max() - df[col].min()) + df[col].min()
+                ax.plot(center_dates, mp_rescaled, color="blue", alpha=0.8, label="Matrix Profile")
 
-        # Motifs
-        for pat_id, pat in enumerate(patterns):
-            c = motif_colors[pat_id % len(motif_colors)]
-            if dim not in pattern_dims[pat_id]:
-                continue
-            for j, s in enumerate(pat["motif_indices_debut"]):
-                if s < 0 or s + window_size >= len(df):
+            # Motifs
+            for pat_id, pat in enumerate(patterns):
+                c = motif_colors[pat_id % len(motif_colors)]
+                if dim not in pattern_dims[pat_id]:
                     continue
-                e = s + window_size
-                ax.axvspan(df.index[s], df.index[e], color=c, alpha=0.25,
-                           label=(pat["pattern_label"] if j == 0 and dim == 0 else None))
+                for j, s in enumerate(pat["motif_indices_debut"]):
+                    if s < 0 or s + window_size >= len(df):
+                        continue
+                    e = s + window_size
+                    ax.axvspan(df.index[s], df.index[e], color=c, alpha=0.25,
+                            label=(pat["pattern_label"] if j == 0 and dim == 0 else None))
 
-        # Discords
-        for j, d in enumerate(discords):
-            ax.axvline(df.index[d], color="red", linestyle="-", alpha=1, linewidth=0.3,
-                       label="Discord" if j == 0 else None)
+            # Discords
+            for j, d in enumerate(discords):
+                ax.axvline(df.index[d], color="red", linestyle="-", alpha=1, linewidth=0.3,
+                        label="Discord" if j == 0 else None)
 
-        ax.set_ylabel(col)
-        ax.grid(True, linewidth=0.3, alpha=0.6)
-        ax.legend(loc="upper right", fontsize="x-small")
-        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
-        ax.tick_params(axis="x", rotation=45, labelsize="small")
+            ax.set_ylabel(col)
+            ax.grid(True, linewidth=0.3, alpha=0.6)
+            ax.legend(loc="upper right", fontsize="x-small")
+            ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+            ax.tick_params(axis="x", rotation=45, labelsize="small")
 
-    axs[-1].set_xlabel("Date")
-    axs[dim].set_xlim(df.index.min(), df.index.max())
-    fig1.tight_layout()
-    plt.show()
+        axs[-1].set_xlabel("Date")
+        axs[dim].set_xlim(df.index.min(), df.index.max())
+        fig1.tight_layout()
+        plt.show()
 
     # === FIGURE 2: Heatmap Only ===============================================
     dnums = mdates.date2num(center_dates)
@@ -258,6 +260,7 @@ def plot_motif_overlays(
 def plot_all_patterns_and_discords(
     df: pd.DataFrame | list,
     result: dict | list | None,
+    only_heat_map: bool = True,
     tick_step: int = 500,
 ) -> None:
     """Plot all multivariate motifs and discords.
@@ -270,6 +273,8 @@ def plot_all_patterns_and_discords(
         Associated result structure from motif discovery.
     tick_step : int, optional
         Forwarded to :func:`plot_multidim_patterns_and_discords`.
+    only_heatmap : optional
+        print only heatmap
 
     Returns
     -------
@@ -281,12 +286,12 @@ def plot_all_patterns_and_discords(
         # Simple case
         if isinstance(df, pd.DataFrame):
             print(f"Window size : {result['window_size'][0]} ---")
-            plot_multidim_patterns_and_discords(df, None)
+            plot_multidim_patterns_and_discords(df, None, only_heat_map=only_heat_map)
         # Flat list case
         elif isinstance(df, list) and all(isinstance(d, pd.DataFrame) for d in df):
             for i, d in enumerate(df):
                 print(f"\n--- Cluster {i+1} (Window size : {result['window_size'][0]}) ---")
-                plot_multidim_patterns_and_discords(d, None)
+                plot_multidim_patterns_and_discords(d, None, only_heat_map=only_heat_map)
         else:
             raise TypeError("Unsupported df structure when result is None.")
         return  # nothing else to do
@@ -294,13 +299,13 @@ def plot_all_patterns_and_discords(
     # --- Normal cases ---
     if isinstance(df, pd.DataFrame) and isinstance(result, dict):
         print(f"Window size : {result['window_size'][0]} ---")
-        plot_multidim_patterns_and_discords(df, result, tick_step=tick_step)
+        plot_multidim_patterns_and_discords(df, result, tick_step=tick_step, only_heat_map=only_heat_map)
 
     elif isinstance(df, list) and isinstance(result, list):
         if all(isinstance(d, pd.DataFrame) for d in df) and all(isinstance(r, dict) for r in result):
             for i, (d, r) in enumerate(zip(df, result)):
                 print(f"\n--- Cluster {i+1} (Window size : {r['window_size'][0]}) ---")
-                plot_multidim_patterns_and_discords(d, r, tick_step=tick_step)
+                plot_multidim_patterns_and_discords(d, r, tick_step=tick_step, only_heat_map=only_heat_map)
         else:
             raise TypeError("Incompatible list structure for df and result.")
     else:
