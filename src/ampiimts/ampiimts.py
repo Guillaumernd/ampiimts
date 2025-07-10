@@ -37,6 +37,7 @@ def process(
     display_info: bool = False,
     most_stable_only: bool = False,
     smart_interpolation: bool = True,
+    printunidimensional: bool = False,
 ) -> Tuple[
     Union[pd.DataFrame, List[pd.DataFrame]],
     Union[pd.DataFrame, List[pd.DataFrame]],
@@ -85,6 +86,9 @@ def process(
     smart_interpolation : bool, optional
         interpolation with matrix_profile via other
         similar sensors
+    printunidimensional : bool, optional
+        See unidimensional matri_profil
+
         
     Returns
     -------
@@ -119,6 +123,8 @@ def process(
         cluster=cluster,
         motif=motif,
         most_stable_only=most_stable_only,
+        smart_interpolation=smart_interpolation,
+        printunidimensional=printunidimensional,
     )
 
     if smart_interpolation:
@@ -136,6 +142,8 @@ def process(
             cluster=cluster,
             motif=motif,
             most_stable_only=most_stable_only2,
+            smart_interpolation=False,
+            printunidimensional=printunidimensional,
         )
 
     if visualize:
@@ -165,6 +173,7 @@ def ampiimts(
     display_info: bool = False,
     most_stable_only: bool = False,
     smart_interpolation: bool = True,
+    printunidimensional: bool = False,
 ) -> Tuple[
     Union[pd.DataFrame, List[pd.DataFrame]],
     Union[pd.DataFrame, List[pd.DataFrame]],
@@ -201,6 +210,7 @@ def ampiimts(
             display_info,
             most_stable_only,
             smart_interpolation,
+            printunidimensional,
         )
 
     elif isinstance(data, pd.DataFrame):
@@ -224,6 +234,7 @@ def ampiimts(
             display_info,
             most_stable_only,
             smart_interpolation,
+            printunidimensional,
         )
 
     else:

@@ -21,6 +21,8 @@ def matrix_profile_process(
     motif: bool = False,
     min_mdl_ratio: float = 0.25,
     most_stable_only: bool = False,
+    smart_interpolation: bool = True,
+    printunidimensional: bool = False,
 ) -> dict:
     """Compute motif and discord information for one DataFrame.
 
@@ -45,6 +47,11 @@ def matrix_profile_process(
         Minimum ratio used when selecting dimensions with MDL.
     most_stable_only : bool, optional
         ``True`` to extract the most stable sensor
+    smart_interpolation : bool, optional
+        interpolation with matrix_profile via other
+        similar sensors
+    printunidimensional : bool, optional
+        See unidimensional matri_profil
 
     Returns
     -------
@@ -83,8 +90,6 @@ def matrix_profile_process(
             print(f"[MatrixProfile Warning] failed for window {window_size}: {e}")
             return None
 
-
-
     # ==== MULTIVARIATE ====
     try:
         return discover_patterns_mstump_mixed(
@@ -97,6 +102,8 @@ def matrix_profile_process(
             motif=motif,
             min_mdl_ratio=min_mdl_ratio,
             most_stable_only=most_stable_only,
+            smart_interpolation=smart_interpolation,
+            printunidimensional=printunidimensional,
         )
     except ValueError as e:
         print(f"[MatrixProfile Warning] failed for window {window_size}: {e}")
@@ -112,7 +119,8 @@ def matrix_profile(
     motif:bool =False,
     min_mdl_ratio: float = 0.25,
     most_stable_only: bool = False,
-
+    smart_interpolation: bool = True,
+    printunidimensional: bool = False,
 ) -> Union[dict, List[dict], List[List[dict]]]:
     """Compute matrix profiles for one or many DataFrames.
 
@@ -136,6 +144,12 @@ def matrix_profile(
         Minimum MDL ratio when selecting dimensions.
     most_stable_only : bool, optional
         ``True`` to extract the most stable sensor
+    smart_interpolation : bool, optional
+        interpolation with matrix_profile via other
+        similar sensors
+    printunidimensional : bool, optional
+        See unidimensional matri_profil
+
 
     Returns
     -------
@@ -160,6 +174,8 @@ def matrix_profile(
             max_matches=max_matches,
             cluster=cluster,
             most_stable_only=most_stable_only,
+            smart_interpolation=smart_interpolation,
+            printunidimensional=printunidimensional,
         )
 
     elif isinstance(data, list) and all(isinstance(x, pd.DataFrame) for x in data):
@@ -175,6 +191,8 @@ def matrix_profile(
                 motif=motif,
                 min_mdl_ratio=min_mdl_ratio,
                 most_stable_only=most_stable_only,
+                smart_interpolation=smart_interpolation,
+                printunidimensional=printunidimensional,
             )
             for df in pds
         ]

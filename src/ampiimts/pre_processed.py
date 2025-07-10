@@ -797,7 +797,8 @@ def cluster_dimensions(
 
             sub_corr = base_df[cluster_vars + others].corr().loc[cluster_vars, others]
             mean_cross_corr = sub_corr.abs().mean().mean()
-            print(f"    Cluster {i+1:02d} ({len(cluster_vars)} variables) correlation = {mean_cross_corr:.3f}")
+            if display_info:
+                print(f"    Cluster {i+1:02d} ({len(cluster_vars)} variables) correlation = {mean_cross_corr:.3f}")
         
         if display_info:
             print("\n Correlation between parameters in sensors :")
@@ -972,27 +973,28 @@ def interpolate_from_matrix_profile(
     min_valid_ratio: float = 0.5,
 ) -> pd.DataFrame:
     """
-    Interpole toutes les colonnes manquantes à partir des colonnes similaires
-    (ayant le même préfixe) en se basant sur leur matrix profile déjà calculé.
+    Interpolate missing values in each column using similar columns (with the same prefix),
+    based on their precomputed matrix profiles.
 
     Parameters
     ----------
     df : pd.DataFrame
-        Données d'origine.
+        Original input data.
     matrix_profile : pd.DataFrame
-        Matrix profile centré (index = timestamps, colonnes = "mp_dim_<col>").
+        Centered matrix profile (indexed by timestamps, with columns named "mp_dim_<col>").
     top_k : int
-        Nombre de colonnes similaires à utiliser pour interpoler.
+        Number of most similar columns to use for interpolation.
     min_valid_ratio : float
-        Seuil minimal de points communs valides.
+        Minimum ratio of overlapping valid (non-NaN) values required to compare matrix profiles.
 
     Returns
     -------
     pd.DataFrame
-        DataFrame avec les colonnes interpolées.
+        A copy of the input DataFrame with interpolated columns where applicable.
     """
     df_result = df.copy()
     matrix_profile = matrix_profile["matrix_profile"]
+
     for target_col in df.columns:
         if df[target_col].isna().any():
 
@@ -1027,14 +1029,13 @@ def interpolate_from_matrix_profile(
                 continue
 
             best_cols = sorted(scores, key=scores.get)[:top_k]
-
             fill_values = df[best_cols].mean(axis=1, skipna=True)
+
             result = df[target_col].copy()
             result[result.isna()] = fill_values[result.isna()]
             df_result[target_col] = result
 
     return df_result
-
 
     
 def interpolate_all_columns_by_similarity(

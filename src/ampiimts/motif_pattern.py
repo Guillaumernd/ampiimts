@@ -266,6 +266,8 @@ def discover_patterns_mstump_mixed(
     cluster: bool = False,
     motif: bool = False,
     most_stable_only: bool = False,
+    smart_interpolation: bool = True,
+    printunidimensional: bool = False,
 ) -> dict:
     """Discover motifs and discords on multivariate signals.
 
@@ -289,6 +291,11 @@ def discover_patterns_mstump_mixed(
         ``True`` to extract motifs in addition to discords.
     most_stable_only : bool, optional
         ``True`` to extract the most stable sensor
+    smart_interpolation : bool, optional
+        interpolation with matrix_profile via other
+        similar sensors
+    printunidimensional : bool, optional
+        See unidimensional matri_profil
 
     Returns
     -------
@@ -347,35 +354,40 @@ def discover_patterns_mstump_mixed(
             max_matches=max_matches,
             normalize=False,
         )
+    if not most_stable_only:
+        # 5) Calculate discords
+        
+        if smart_interpolation:
+            mp_full = compute_univariate_matrix_profiles(df, window_size)
+        else:
+            P_disc, _ = stumpy.mstump(X, m=window_size, normalize=False, discords=True)
 
-    # 5) Calculate discords
-    P_disc, _ = stumpy.mstump(X, m=window_size, normalize=False, discords=True)
+            # Centered matrix profile
+            profile_len = n - window_size + 1
+            center_idx = np.arange(profile_len) + window_size // 2
+            index_centered = df.index[center_idx]
 
-    # Centered matrix profile
-    profile_len = n - window_size + 1
-    center_idx = np.arange(profile_len) + window_size // 2
-    index_centered = df.index[center_idx]
+            mp_df = pd.DataFrame(
+                data=P_disc.T,
+                index=index_centered,
+                columns=[f"mp_dim_{col}" for col in df.columns]
+            )
 
-    mp_df = pd.DataFrame(
-        data=P_disc.T,
-        index=index_centered,
-        columns=[f"mp_dim_{col}" for col in df.columns]
-    )
+            pre_pad = window_size // 2
+            post_pad = window_size - pre_pad - 1  # ensure m-1 in total
 
-    pre_pad = window_size // 2
-    post_pad = window_size - pre_pad - 1  # ensure m-1 in total
+            nan_start = np.full((pre_pad, mp_df.shape[1]), np.nan)
+            nan_end = np.full((post_pad, mp_df.shape[1]), np.nan)
 
-    nan_start = np.full((pre_pad, mp_df.shape[1]), np.nan)
-    nan_end = np.full((post_pad, mp_df.shape[1]), np.nan)
-
-    mp_full = pd.DataFrame(
-        np.vstack([nan_start, mp_df.values, nan_end]),
-        index=df.index[:n],  # return to original length
-        columns=mp_df.columns
-    )
-    mp_full.replace([np.inf, -np.inf], np.nan, inplace=True)
+            mp_full = pd.DataFrame(
+                np.vstack([nan_start, mp_df.values, nan_end]),
+                index=df.index[:n],  # return to original length
+                columns=mp_df.columns
+            )
+            mp_full.replace([np.inf, -np.inf], np.nan, inplace=True)
 
     if most_stable_only:
+        mp_full = compute_univariate_matrix_profiles(df, window_size)
         suffix_groups = defaultdict(list)
         for col in df.columns:
             match = re.match(r"(.*)_(\d+)$", col)
@@ -407,8 +419,12 @@ def discover_patterns_mstump_mixed(
         # Update X and matrix_profile
         X = df.to_numpy(dtype=float).T
         d, n = X.shape
-        P_disc, _ = stumpy.mstump(X, m=window_size, normalize=False, discords=True)
 
+        if not smart_interpolation:
+            P_disc, _ = stumpy.mstump(X, m=window_size, normalize=False, discords=True)
+        else:
+            P_disc = mp_full
+            motif = False
         # Update mp_full
         profile_len = n - window_size + 1
         center_idx = np.arange(profile_len) + window_size // 2
@@ -436,16 +452,19 @@ def discover_patterns_mstump_mixed(
                 normalize=False,
             )
 
-    # Filtered discords
-    disc_idxs = exclude_discords(
-        mp=P_disc,
-        window_size=window_size,
-        discord_top_pct=discord_top_pct,
-        X=X,
-        max_nan_frac=0.05,
-        margin=10
-    )
-    discords = sorted(disc_idxs)
+    if not smart_interpolation:
+        # Filtered discords
+        disc_idxs = exclude_discords(
+            mp=P_disc,
+            window_size=window_size,
+            discord_top_pct=discord_top_pct,
+            X=X,
+            max_nan_frac=0.05,
+            margin=10
+        )
+        discords = sorted(disc_idxs)
+    else:
+        discords = []
 
     # 6) Motif processing
     aligned_patterns = []
@@ -529,9 +548,52 @@ def discover_patterns_mstump_mixed(
                         "medoid_idx": medoid_start,
                         "motif_indices_debut": filtered
                     })
+    mp_full = compute_univariate_matrix_profiles(df, window_size) if printunidimensional else mp_full
     return {
         "patterns": aligned_patterns,
         "discord_indices": discords,
         "window_size": df.attrs["m"],
         "matrix_profile": mp_full
     }
+
+
+def compute_univariate_matrix_profiles(df: pd.DataFrame, window_size: int) -> pd.DataFrame:
+    """
+    Compute the univariate matrix profiles for each time series in `df`.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Time-indexed DataFrame containing numeric columns.
+    window_size : int
+        Sliding window size for matrix profile computation.
+
+    Returns
+    -------
+    pd.DataFrame
+        A DataFrame indexed like the input `df`, containing one column per signal named 'mp_dim_<col>'.
+    """
+    df = df.copy()
+    index = df.index
+    profiles = {}
+
+    for col in df.select_dtypes(include=[np.number]).columns:
+        series = df[col].to_numpy(dtype=float)
+        if np.isnan(series).all():
+            mp = np.full(len(series), np.nan)
+        else:
+            try:
+                P = stumpy.stump(series, m=window_size)
+                mp_core = P[:, 0]
+                nan_start = np.full(window_size // 2, np.nan)
+                nan_end = np.full(window_size - window_size // 2 - 1, np.nan)
+                mp = np.concatenate([nan_start, mp_core, nan_end])
+            except Exception:
+                mp = np.full(len(series), np.nan)
+
+        profiles[f"mp_dim_{col}"] = mp
+
+    mp_df = pd.DataFrame(profiles, index=index)
+    mp_df = mp_df.infer_objects(copy=False)
+    mp_df.replace([np.inf, -np.inf], np.nan, inplace=True)
+    return mp_df
