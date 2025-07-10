@@ -827,7 +827,33 @@ def cluster_dimensions(
             print("\n")
     if not clusters:
         print("Skipping DataFrame: not enough rich dimensions — too much noise, constant values, or missing data.")
+        
+    def filter_cluster_to_complete_units(cluster_cols):
+        cols = [c for c in cluster_cols if c != 'timestamp']
+        units = defaultdict(set)
+        for col in cols:
+            try:
+                modality, idx = col.split("_")
+                units[idx].add(modality)
+            except ValueError:
+                continue
 
+        if not units:
+            return []
+
+        max_modalities = max(len(mods) for mods in units.values())
+
+        complete_indices = [idx for idx, mods in units.items() if len(mods) == max_modalities]
+
+        complete_cols = [c for c in cols if c.split("_")[1] in complete_indices]
+
+        if 'timestamp' in cluster_cols:
+            complete_cols.append('timestamp')
+
+        return complete_cols if complete_indices else []
+
+    clusters = [filter_cluster_to_complete_units(c) for c in clusters]
+    clusters = [c for c in clusters if c] 
     return clusters
 
 
