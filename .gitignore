@@ -87,4 +87,8 @@ dataset/
 
 #test files
 main.py
+*ipynb
 /test
+
+# application example AMPIIMTS
+!notebooks/Matrix_Profile/ampiimts_example.ipynb

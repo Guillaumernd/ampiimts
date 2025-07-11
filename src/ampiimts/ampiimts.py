@@ -89,7 +89,7 @@ def process(
         similar sensors
     printunidimensional : bool, optional
         See unidimensional matri_profil
-    only_heatmap : bool, optional
+    only_heat_map : bool, optional
         only print heatmap
 
     Returns
@@ -150,7 +150,8 @@ def process(
 
     if visualize:
         plot_all_patterns_and_discords(pds_interpolated, matrix_profile_result, only_heat_map=only_heat_map)
-        plot_all_motif_overlays(pds_interpolated, matrix_profile_result)
+        if motif:
+            plot_all_motif_overlays(pds_interpolated, matrix_profile_result)
 
     return pds_interpolated, pds_normalized, matrix_profile_result
 
@@ -174,16 +175,70 @@ def ampiimts(
     group_size: int = None,
     display_info: bool = False,
     most_stable_only: bool = False,
-    smart_interpolation: bool = True,
+    smart_interpolation: bool = False,
     printunidimensional: bool = False,
-    only_heatmap: bool = True,
+    only_heat_map: bool = True,
 ) -> Tuple[
     Union[pd.DataFrame, List[pd.DataFrame]],
     Union[pd.DataFrame, List[pd.DataFrame]],
     Union[Dict[str, Any], List[Dict[str, Any]]]
 ]:
-    """Complete motif and discord analysis pipeline."""
+    """Process one or several DataFrames and return analysis results.
 
+    Parameters
+    ----------
+    data : pandas.DataFrame or list of DataFrame
+        Input dataset(s) or a path to CSV files.
+    gap_multiplier : float, optional
+        Gap multiplier used during interpolation.
+    min_std : float, optional
+        Minimum allowed standard deviation for normalization.
+    min_valid_ratio : float, optional
+        Minimum fraction of valid values in a window.
+    alpha : float, optional
+        Weight of the trend component in ASWN normalization.
+    window_size : str or None, optional
+        Sliding window size; if ``None`` it is inferred.
+    sort_by_variables : bool, optional
+        Sort variables by variance prior to clustering.
+    cluster : bool, optional
+        Whether to cluster variables before computing the profile.
+    top_k_cluster : int, optional
+        Maximum number of clusters retained.
+    visualize : bool, optional
+        If ``True`` plots of the results are shown.
+    max_motifs : int, optional
+        Maximum number of motifs to return.
+    discord_top_pct : float, optional
+        Fraction of highest profile values considered discords.
+    max_matches : int, optional
+        Maximum number of motif matches returned.
+    motif : bool, optional
+        Whether to extract motifs in addition to discords.
+    max_len : int or None, optional
+        Maximum number of rows loaded from each file.
+    group_size : int, optional
+        Target group size for hierarchical clustering.
+    display_info : bool, optional
+        Display informations about data.
+    most_stable_only : bool, optional
+        ``True`` to extract the most stable sensor
+    smart_interpolation : bool, optional
+        interpolation with matrix_profile via other
+        similar sensors
+    printunidimensional : bool, optional
+        See unidimensional matri_profil
+    only_heat_map : bool, optional
+        only print heatmap
+
+    Returns
+    -------
+    tuple
+        ``(interpolated, normalized, result)`` containing processed
+        dataframes and the matrix profile result.
+    """
+    if isinstance(data, str) and os.path.isfile(data):
+        df = pd.read_csv(data)
     if isinstance(data, str) and os.path.isdir(data):
         pds = []
         with os.scandir(data) as entries:
@@ -214,6 +269,7 @@ def ampiimts(
             most_stable_only,
             smart_interpolation,
             printunidimensional,
+            only_heat_map,
         )
 
     elif isinstance(data, pd.DataFrame):
@@ -238,6 +294,7 @@ def ampiimts(
             most_stable_only,
             smart_interpolation,
             printunidimensional,
+            only_heat_map,
         )
 
     else:
