@@ -67,7 +67,7 @@ def exclude_discords(
             P = mp.astype(float)
 
     if P.ndim == 2:
-        P = np.nanmean(P, axis=0)
+        P = mp[-1].astype(float)
 
     valid_idx = np.where(~np.isnan(P))[0]
     candidates = []
@@ -343,11 +343,10 @@ def discover_patterns_mstump_mixed(
         df = df.iloc[:, selected_dims]
         d = X.shape[0]
 
-    if motif:
-            
+    if motif and not smart_interpolation and not most_stable_only:
+
         # 3) Reduced matrix profile (motifs + discords)
         P, I = stumpy.mstump(X, m=window_size, normalize=False, discords=False)
-
         # 4) Run mmotifs
         motif_distances, motif_indices, motif_subspaces, motif_mdls = stumpy.mmotifs(
             X, P, I,
@@ -470,7 +469,7 @@ def discover_patterns_mstump_mixed(
 
     # 6) Motif processing
     aligned_patterns = []
-    if motif:
+    if motif and not smart_interpolation:
         occupied0 = []
         occupied1 = []
         for motif_id, (group, subspace) in enumerate(zip(motif_indices, motif_subspaces)):
