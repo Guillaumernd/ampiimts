@@ -13,7 +13,7 @@ Adaptive Matrix Profile Indexing for irregular multivariate time series.
 
 ## Documentation
 
-- [Documentation](documentation/documentation.md)
+- [Documentation](documentation/README.md)
 - [Examples](documentation/ampiimts_example.ipynb)
 
 ## Installation
