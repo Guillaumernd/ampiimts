@@ -11,6 +11,11 @@ Adaptive Matrix Profile Indexing for irregular multivariate time series.
 - Optional dimensionality reduction and FAISS based nearest neighbour search.
 - Plotting utilities to visualise patterns and discords.
 
+## Documentation
+
+- [Documentation](documentation/documentation.md)
+- [Examples](documentation/ampiimts_example.ipynb)
+
 ## Installation
 
 ```bash
