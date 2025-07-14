@@ -113,6 +113,8 @@ def process(
         display_info=display_info,
         smart_interpolation=smart_interpolation
     )
+    smart_interpolation, most_stable_only = (False, False) if not cluster else (
+        smart_interpolation, most_stable_only)
     most_stable_only2 = True if most_stable_only and smart_interpolation else False
     most_stable_only = True if not smart_interpolation and most_stable_only else False
 
