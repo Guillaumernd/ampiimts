@@ -244,29 +244,35 @@ Altogether, these findings validate AMPIIMTS as a reliable, modular, and explain
 
 ## References:
 
+[1] Time Warp Edit Distance (https://arxiv.org/abs/0802.3522)
 
-Marrs, T. (2019). Introduction to Matrix Profiles: A Novel Data Structure for Mining Time Series. Medium.
+[2] Soft-DTW: a Differentiable Loss Function for Time-Series (https://arxiv.org/abs/1703.01541)
 
+[3] A Complexity-Invariant Distance Measure for Time Series (https://www.cs.ucr.edu/%7Eeamonn/Complexity-Invariant%20Distance%20Measure.pdf)
 
-Renouard, G. (2023). AMPIIMTS - Adaptive Matrix Profile Indexing for Irregular Multivariate Time Series [README documentation]. GitHub.
+[4] Utilizing an adaptive window rolling median methodology for time series anomaly detection (https://www.sciencedirect.com/science/article/pii/S1877050922023328?ref=cra_js_challenge&fr=RR-1)
 
+[5] An adaptive sliding window for anomaly detection of time series in wireless sensor networks (https://link.springer.com/article/10.1007/s11276-021-02852-3)
 
-World Meteorological Centre Beijing (2021). North China saw extreme rainfall on 11–12 July 2021. WMC-BJ Bulletin.
+[6] Anomaly detection in time series: a comprehensive evaluation (https://dl.acm.org/doi/abs/10.14778/3538598.3538602)
 
+[7] Anomaly Detection for IoT Time-Series Data: A Survey (https://ieeexplore.ieee.org/abstract/document/8926446)
 
-Global Times (2021). Beijing poised to experience 2021’s heaviest rainfall with strong winds. Published 11 July 2021.
+[8] Adaptive sliding window normalization (https://www.sciencedirect.com/science/article/pii/S030643792400173X)
 
+[9] Anomaly Detection Using Causal Sliding Windows (https://ieeexplore.ieee.org/abstract/document/7109108)
 
-Davidson, H. (2021). Beijing skies turn orange as sandstorm and pollution send readings off the scale. The Guardian. Published 15 March 2021.
+[10] Comparing Threshold Selection Methods for Network Anomaly Detection (https://ieeexplore.ieee.org/abstract/document/10659855)
 
+[11] DAMP: accurate time series anomaly detection on trillions of datapoints and ultra-fast arriving data streams (https://link.springer.com/article/10.1007/s10618-022-00911-7)
 
-Reuters (2023). Beijing records hottest June day since records began as heatwave hits China. Cited by The Guardian, June 2023.
+[12] Discovering Multi-Dimensional Time Series Anomalies with K of N Anomaly Detection (https://epubs.siam.org/doi/epdf/10.1137/1.9781611977653.ch77)
 
+[13] Introduction to Matrix Profiles (https://medium.com/data-science/introduction-to-matrix-profiles-5568f3375d90)
 
-STUMPY Documentation (n.d.). STUMPY Basics Tutorial: Motifs and Discords. stumpy.docs.
+[14] Matrix Profile Tutorial (https://www.cs.ucr.edu/~eamonn/Matrix_Profile_Tutorial_Part2.pdf)
 
+[15] C22MP: Fusing catch22 and the Matrix Profile to Produce an Efficient and Interpretable Anomaly Detector (https://www.dropbox.com/scl/fi/3vs0zsh4tw63qrn46uyf9/C22MP_ICDM.pdf?rlkey=dyux24kqpagh3i38iw6obiomq&e=1&dl=0)
 
-SenX (2022). Matrix Profile of a Time Series to Discover Patterns. SenX Tech Blog.
+[16] Matrix Profile for Anomaly Detection on Multidimensional Time Series (https://arxiv.org/abs/2409.09298)
 
-
-UCR Time Series Classification Archive (2021). Motif Discovery and Discords in Time Series. University of California, Riverside.
