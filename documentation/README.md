@@ -246,7 +246,7 @@ Altogether, these findings validate AMPIIMTS as a reliable, modular, and explain
 
 [1] Time Warp Edit Distance (https://arxiv.org/abs/0802.3522)
 
-[2] Soft-DTW: a Differentiable Loss Function for Time-Series (https://arxiv.org/abs/1703.01541)
+[2] Stumpy: Matrix profile ([https://arxiv.org/abs/1703.01541](https://stumpy.readthedocs.io/en/latest/index.html#publications))
 
 [3] A Complexity-Invariant Distance Measure for Time Series (https://www.cs.ucr.edu/%7Eeamonn/Complexity-Invariant%20Distance%20Measure.pdf)
 
