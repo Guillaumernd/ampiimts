@@ -91,4 +91,4 @@ main.py
 /test
 
 # application example AMPIIMTS
-!notebooks/Matrix_Profile/ampiimts_example.ipynb
+!documentation/ampiimts_example.ipynb
