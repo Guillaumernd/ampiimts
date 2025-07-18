@@ -14,28 +14,57 @@ import re
 import random
 import stumpy
 
+
 def synchronize_on_common_grid(
     dfs_original: List[pd.DataFrame],
     gap_multiplier: float = 15,
     propagate_nan: bool = True,
     display_info: bool = False,
-
 ) -> pd.DataFrame:
-    """Synchronize several time series on a common timestamp grid.
+    """
+    Align multiple time series on a common timestamp grid for uniform processing.
+
+    This function:
+    - Interpolates each DataFrame individually.
+    - Filters series based on compatible sampling frequencies.
+    - Aligns time ranges if overlapping or generates a synthetic index otherwise.
+    - Resamples all series to a common time grid using mean aggregation.
 
     Parameters
     ----------
-    dfs_original : list of pandas.DataFrame
-        Individual dataframes to align.
+    dfs_original : list of pd.DataFrame
+        List of input DataFrames, each with a datetime index and numeric columns.
     gap_multiplier : float, optional
-        Gap multiplier passed to :func:`interpolate`.
+        Threshold multiplier for interpolation gap detection, passed to `interpolate()`. Default is 15.
     propagate_nan : bool, optional
-        If ``True`` keep NaNs generated during preprocessing.
+        If True, keeps NaN values introduced during cleaning in each series. Default is True.
+    display_info : bool, optional
+        If True, prints information about the synchronization process. Default is False.
 
     Returns
     -------
-    pandas.DataFrame
-        Combined dataframe with aligned timestamps and unique column names.
+    pd.DataFrame
+        A unified multivariate time series where each original DataFrame is suffixed (`_0`, `_1`, etc.)
+        and reindexed on the common timestamp grid.
+
+    Raises
+    ------
+    ValueError
+        If none of the input DataFrames have compatible sampling frequencies.
+
+    Notes
+    -----
+    - The common frequency is chosen as the median of all valid inferred frequencies.
+    - The synchronization strategy depends on time alignment:
+        - If ranges are sufficiently close, a shared timeline is used.
+        - Otherwise, a synthetic index starting from epoch is generated.
+    - All series are trimmed to match the shortest series in the set.
+
+    Examples
+    --------
+    >>> synced_df = synchronize_on_common_grid([df1, df2])
+    >>> synced_df.shape
+    (1000, 10)
     """
 
     # 1. Interpolate each DataFrame independently
@@ -155,24 +184,57 @@ def interpolate(
     column_thresholds: dict = None,
     propagate_nan: bool = True,
 ) -> pd.DataFrame:
-    """Interpolate and clean a single time series DataFrame.
+    """
+    Clean and interpolate a time-indexed multivariate time series DataFrame.
+
+    This function performs robust preprocessing of a time series by:
+    - removing plateau-like constant value regions,
+    - detecting and discarding extreme outliers using adaptive thresholds,
+    - identifying and interpolating short gaps using time-aware linear interpolation,
+    - reinjecting NaNs if desired (for later analysis or imputation),
+    - removing nearly constant (linear) columns after interpolation.
 
     Parameters
     ----------
-    df_origine : pandas.DataFrame
-        Raw dataframe with a ``timestamp`` column.
+    df_origine : pd.DataFrame
+        Input time series with a mandatory `"timestamp"` column (either as index or column).
     gap_multiplier : float, optional
-        Multiplier used to determine large gaps for resampling.
+        Determines what is considered a "large gap" by multiplying the inferred base frequency.
+        Gaps larger than `gap_multiplier * freq` are not interpolated. Default is 15.
     column_thresholds : dict, optional
-        Column-specific thresholds for outlier removal.
+        Dictionary specifying per-column outlier detection thresholds.
+        If not provided, thresholds are estimated automatically.
     propagate_nan : bool, optional
-        Reinject NaN values introduced during cleaning steps.
+        If True, reintroduces NaN values resulting from plateau detection and outlier removal. Default is True.
 
     Returns
     -------
-    pandas.DataFrame
-        Interpolated dataframe indexed by timestamp.
+    pd.DataFrame
+        Cleaned and interpolated DataFrame with uniform time index (`timestamp`),
+        outliers removed, plateaus cleaned, and optionally missing data reinjected.
+
+    Raises
+    ------
+    ValueError
+        If the `"timestamp"` column is missing or cannot be parsed.
+        If the time series is too short to infer a frequency.
+
+    Notes
+    -----
+    - Outliers are detected based on deviation from the column median beyond a dynamic threshold.
+    - Plateaus are constant regions that persist for ≥ 5 time steps and are globally removed.
+    - Linear interpolation is applied within segments of consistent frequency,
+      with discontinuities across large temporal gaps.
+    - After interpolation, columns with <50% valid data or linear/constant trends are dropped.
+    - The output is guaranteed to be indexed by timestamp and cleaned of duplicates or misaligned indices.
+
+    Examples
+    --------
+    >>> df_clean = interpolate(df, gap_multiplier=10)
+    >>> df_clean.shape
+    (2000, 12)
     """
+
     df = df_origine.copy()
     
     def remove_plateau_values_globally(df: pd.DataFrame, min_duration=5) -> pd.DataFrame:
@@ -586,8 +648,53 @@ def define_m(
     verbose: bool = False
 ) -> list[tuple[int, str, float]]:
     """
-    Determine suitable window sizes for motif extraction using FAISS,
-    using univariate logic with low-bias scoring (stability prioritized).
+    Suggest optimal window sizes for time series motif discovery using STUMP or MSTUMP.
+
+    This function analyzes a time-indexed DataFrame to extract the `k` most promising window sizes
+    for motif extraction. It adapts to the data's temporal resolution and supports both univariate
+    and multivariate input. Window sizes are scored based on a composite metric that includes
+    motif strength, discord separation, and local stability.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Time-indexed DataFrame with numerical columns. Index must be a `pd.DatetimeIndex`.
+    k : int, optional
+        Number of top window sizes to return (sorted by descending score), by default 3.
+    max_window_sizes : int, optional
+        Maximum number of distinct window durations (in seconds) to consider for evaluation, by default 25.
+    max_points : int, optional
+        Maximum number of rows to keep from `df` for performance reasons. A subsample is used if exceeded, by default 5000.
+    verbose : bool, optional
+        If True, prints errors encountered during STUMP/MSTUMP computation, by default False.
+
+    Returns
+    -------
+    list of tuple (int, str, float)
+        A list of the top `k` window sizes, each as a tuple:
+        - number of points (int),
+        - human-readable timedelta string (str),
+        - associated composite score (float), where higher is better.
+
+    Raises
+    ------
+    ValueError
+        If the index is not a `pd.DatetimeIndex`, or if no numeric columns are found.
+
+    Notes
+    -----
+    - The function determines an adaptive range of time-based window sizes depending on the data's sampling frequency.
+    - Motif score is penalized for high global noise and insufficient discord separation.
+    - Final scores combine:
+        * inverse of mean/percentile distances (motif strength),
+        * discord separation (p98 - p90),
+        * low variation of local gradient (stability),
+        * penalties for noise and overly long windows.
+
+    Examples
+    --------
+    >>> define_m(my_dataframe, k=5)
+    [(60, '0 days 00:01:00', 0.0721), (120, '0 days 00:02:00', 0.0653), ...]
     """
     if not isinstance(df.index, pd.DatetimeIndex):
         raise ValueError("Index must be datetime")
@@ -705,29 +812,63 @@ def cluster_dimensions(
     mode: str = 'hybrid',
     display_info: bool = False,
 ) -> List[List[str]]:
-    """Cluster dataframe columns based on temporal coherence.
+    """
+    Cluster time series dimensions (columns) based on correlation coherence.
+
+    This function groups sensor or signal dimensions from one or several DataFrames
+    into clusters of highly correlated columns, based on their temporal patterns.
+    The clustering is hierarchical and uses pairwise correlation-derived distances.
+    Only informative (non-flat, sufficiently populated) columns are retained.
 
     Parameters
     ----------
-    df : pandas.DataFrame or list of DataFrame
-        Input data.
+    df : Union[pd.DataFrame, List[pd.DataFrame]]
+        Input data, either a single DataFrame or a list of DataFrames.
+        Each must have a time-based index and numeric columns.
     group_size : int, optional
-        Target group size for hierarchical clustering.
+        Maximum number of sensor modalities per cluster, by default 6.
     top_k : int, optional
-        Maximum number of clusters to keep.
+        Maximum number of clusters to return, by default 4.
     min_std : float, optional
-        Minimum standard deviation for a column to be considered.
+        Minimum standard deviation required for a column to be considered valid, by default 1e-2.
     min_valid_ratio : float, optional
-        Minimum ratio of valid samples in each column.
+        Minimum ratio of non-NaN values required for a column, by default 0.8.
     min_cluster_size : int, optional
-        Minimum number of columns in a cluster.
+        Minimum number of columns for a cluster to be kept, by default 2.
     mode : {'motif', 'discord', 'hybrid'}, optional
-        Distance metric selection.
+        Strategy to compute distances between columns:
+        - 'motif': favors similarly varying curves (square of correlation),
+        - 'discord': penalizes opposite sign trends (absolute correlation),
+        - 'hybrid': uses raw correlation (positive and negative preserved).
+    display_info : bool, optional
+        If True, displays inter- and intra-cluster correlations for diagnostics.
 
     Returns
     -------
-    list of list of str
-        Clustered column names including the ``timestamp`` column.
+    List[List[str]]
+        A list of clusters, each a list of column names including 'timestamp'.
+        Only clusters containing sufficiently complete sensor units are returned.
+
+    Raises
+    ------
+    TypeError
+        If `df` is neither a DataFrame nor a list of DataFrames.
+    ValueError
+        If `mode` is not one of {'motif', 'discord', 'hybrid'}.
+
+    Notes
+    -----
+    - Clusters are filtered to ensure that they contain diverse sensor families (modalities).
+    - Correlation matrices are used as similarity measures, transformed into distances.
+    - Final clusters are cleaned to retain only complete sensor units (i.e., sets of modalities with matching indices).
+    - This function is well-suited for preprocessing multivariate time series before dimensionality reduction or motif analysis.
+
+    Examples
+    --------
+    >>> clusters = cluster_dimensions(df, group_size=3, top_k=2)
+    >>> print(clusters)
+    [['sensorA_1', 'sensorB_1', 'sensorC_1', 'timestamp'], 
+     ['sensorA_2', 'sensorB_2', 'sensorC_2', 'timestamp']]
     """
     if isinstance(df, pd.DataFrame):
         df_list = [df]
@@ -900,40 +1041,75 @@ def pre_processed(
     display_info: bool = False,
     smart_interpolation: bool = True,
 ) -> Union[pd.DataFrame, List[pd.DataFrame], List[List[pd.DataFrame]]]:
-    """Interpolate and normalize one or several time series.
+    """
+    Interpolate, normalize, and optionally cluster time series data.
+
+    This function processes one or multiple multivariate time series by:
+    - interpolating missing values,
+    - normalizing signals using adaptive windowing and trend blending,
+    - optionally clustering correlated dimensions for grouped processing.
+
+    It returns interpolated and normalized versions of the input data,
+    as well as optionally a version preserving missing values post-normalization.
 
     Parameters
     ----------
-    data : pandas.DataFrame or list of DataFrame
-        Input dataset(s).
+    data : Union[pd.DataFrame, List[pd.DataFrame]]
+        Input dataset(s), either a single DataFrame or a list of DataFrames.
+        Each must have a datetime index and numeric columns.
     gap_multiplier : float, optional
-        Gap multiplier for interpolation.
+        Controls sensitivity for detecting gaps during interpolation, by default 15.
     min_std : float, optional
-        Minimum standard deviation allowed during normalization.
+        Minimum standard deviation for a column to be retained during normalization, by default 1e-2.
     min_valid_ratio : float, optional
-        Minimum valid ratio for ASWN normalization.
+        Minimum fraction of valid (non-NaN) values in a column, by default 0.8.
     alpha : float, optional
-        Trend blending coefficient.
+        Blending factor between trend and residual in normalization (0 to 1), by default 0.65.
     window_size : str or None, optional
-        Window size used for normalization.
+        Time-based window size (e.g., '30s', '1min') for normalization. If None, will be estimated dynamically.
     sort_by_variables : bool, optional
-        Sort columns by variance before clustering.
+        Whether to sort columns by variance before clustering (not currently used), by default True.
     cluster : bool, optional
-        Whether to perform clustering.
+        If True, performs clustering of time series dimensions before normalization, by default False.
     mode : {'motif', 'discord', 'hybrid'}, optional
-        Mode passed to :func:`cluster_dimensions`.
+        Distance mode used for clustering (via `cluster_dimensions`), by default 'hybrid'.
     top_k_cluster : int, optional
-        Maximum number of clusters retained.
+        Maximum number of clusters to return, by default 4.
     group_size : int, optional
-        Target group size for hierarchical clustering.
+        Target number of modalities per cluster, by default 6.
+    display_info : bool, optional
+        If True, prints diagnostic information about correlation structure and clustering, by default False.
     smart_interpolation : bool, optional
-        interpolation with matrix_profile via other
-        similar sensors
+        If True, also returns a normalization with missing values preserved, allowing for matrix-profile-based imputation, by default True.
 
     Returns
     -------
-    pandas.DataFrame or list
-        Interpolated and optionally normalized data.
+    Union[
+        Tuple[pd.DataFrame, pd.DataFrame, None],
+        Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame],
+        Tuple[List[pd.DataFrame], List[pd.DataFrame], List[pd.DataFrame]]
+    ]
+        Depending on the input and options:
+        - Without clustering: (interpolated_df, normalized_df, None) or with smart_interpolation=True, the third element is the normalized version with NaNs preserved.
+        - With clustering: three lists of DataFrames corresponding to clustered/interpolated, normalized, and normalized-with-NaN-preserved outputs.
+
+    Raises
+    ------
+    TypeError
+        If input data is not a DataFrame or list of DataFrames.
+    ValueError
+        If the estimated or provided window size is too large for a given signal length.
+
+    Notes
+    -----
+    - For clustered inputs, each cluster is processed independently with its own optimal window size.
+    - The third return value is designed for cases where post-processing (e.g., imputation or motif detection) may require keeping original NaN structure.
+    - `define_m()` is used internally to suggest a suitable window size based on stability criteria.
+
+    Examples
+    --------
+    >>> interpolated, normalized, _ = pre_processed(df)
+    >>> interpolated_list, normalized_list, with_nan_list = pre_processed(list_of_dfs, cluster=True)
     """
 
     def get_window_size(df, fallback_len):
