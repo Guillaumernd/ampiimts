@@ -170,7 +170,7 @@ def discover_patterns_stumpy_mixed(
         T=X,
         P=mp[:, 0],
         min_neighbors=3,
-        cutoff=motif_cutoff,
+        # cutoff=motif_cutoff,
         max_matches=max_matches,
         max_motifs=max_motifs,
         normalize=False

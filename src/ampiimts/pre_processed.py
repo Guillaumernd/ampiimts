@@ -12,6 +12,7 @@ import faiss
 import time
 import re
 import random
+import stumpy
 
 def synchronize_on_common_grid(
     dfs_original: List[pd.DataFrame],
@@ -494,13 +495,17 @@ def normalization(
         Normalized dataframe or ``None`` if no valid columns remain.
     """
     df = df.copy()
+    if df.empty or len(df.columns) == 0:
+        print("[INFO] All columns removed (linear or invalid). Returning None.")
+        return None
 
     if not isinstance(df.index, pd.DatetimeIndex):
         df.index = pd.to_datetime(df.index, errors="coerce")
     df = df.sort_index()
-
-    window_size_int = int(pd.Timedelta(window_size) / df.index.to_series().diff().median())
-
+    if not isinstance(window_size, int):
+        window_size_int = int(pd.Timedelta(window_size) / df.index.to_series().diff().median())
+    else:
+        window_size_int = window_size
     for col in df.columns:
         if pd.api.types.is_numeric_dtype(df[col]):
             df[col] = aswn_with_trend(
@@ -572,104 +577,123 @@ def compute_variances(segs: np.ndarray) -> np.ndarray:
 def argsort_desc(arr: np.ndarray) -> np.ndarray:
     return np.argsort(arr)[::-1]
 
+
 def define_m(
     df: pd.DataFrame,
     k: int = 3,
-    window_sizes: list[str] = None,
+    max_window_sizes: int = 25,
     max_points: int = 5000,
-    max_window_sizes: int = 5,
-    max_segments: int = 2000,
-    n_jobs: int = 4,
-) -> list[tuple[int, str, float, float]]:
+    verbose: bool = False
+) -> list[tuple[int, str, float]]:
     """
     Determine suitable window sizes for motif extraction using FAISS,
     using univariate logic with low-bias scoring (stability prioritized).
     """
-    freq = df.index.to_series().diff().median()
-    if pd.isna(freq) or freq <= pd.Timedelta(0):
-        freq = pd.Timedelta(seconds=1)
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError("Index must be datetime")
 
-    if window_sizes is None:
-        max_pts = max(len(df) // 4, 2)
-        n_candidates = min(max_window_sizes * 5, max_pts)
-        pts_candidates = np.unique(
-            np.round(np.logspace(np.log10(2), np.log10(max_pts), num=n_candidates)).astype(int)
-        )
-        window_sizes = [str(p * freq) for p in pts_candidates]
+    # Fréquence et durée totales
+    freq = df.index.to_series().diff().median()
+    freq = freq if pd.notna(freq) and freq > pd.Timedelta(0) else pd.Timedelta(seconds=1)
+    freq_secs = freq.total_seconds()
+    total_secs = (df.index[-1] - df.index[0]).total_seconds()
+    N = len(df)
+
+
+    if freq_secs <= 1e-6:                 # ≤ 1 µs (nanoseconde)
+        base_secs, max_secs = 0.01, 1             # 10 ms à 1 s
+    elif freq_secs <= 1e-3:              # ≤ 1 ms (microseconde)
+        base_secs, max_secs = 0.1, 5              # 100 ms à 5 s
+    elif freq_secs <= 1e-2:              # ≤ 10 ms
+        base_secs, max_secs = 1, 60               # 1 s à 1 min
+    elif freq_secs <= 0.1:               # ≤ 100 ms
+        base_secs, max_secs = 5, 60               # 5 s à 1 min
+    elif freq_secs <= 1:                 # ≤ 1 s
+        base_secs, max_secs = 10, 336             # 10 s à ~5.6 min
+    elif freq_secs <= 10:                # ≤ 10 s
+        base_secs, max_secs = 30, 3360            # 30 s à 56 min
+    elif freq_secs <= 60:                # ≤ 1 min
+        base_secs, max_secs = 300, 21_600          # 5 min à 6 h
+    elif freq_secs <= 300:               # ≤ 5 min
+        base_secs, max_secs = 600, 86_400          # 10 min à 24 h
+    elif freq_secs <= 1800:              # ≤ 30 min
+        base_secs, max_secs = 1800, 604_800        # 30 min à 7 j
+    elif freq_secs <= 3600:              # ≤ 1 h
+        base_secs, max_secs = 3600, 604_800        # 1 h à 7 j
+    elif freq_secs <= 43200:             # ≤ 12 h
+        base_secs, max_secs = 21600, 604_800       # 6 h à 7 j
+    elif freq_secs <= 86400:             # ≤ 1 jour
+        base_secs, max_secs = 43200, 2_678_400       # 12 h à 1 M
+    else:                              # > 1 jour
+        base_secs, max_secs = 86400, min(2592000, total_secs / 2)  # 1 j à 30 j
+
+    max_secs = min(max_secs, total_secs / 2)
+    base_secs = min(base_secs, max_secs)
+
+    secs_cand = np.unique(
+        np.round(np.logspace(np.log10(base_secs), np.log10(max_secs), num=max_window_sizes)).astype(int)
+    )
+    window_sizes = [str(pd.to_timedelta(int(s), unit='s')) for s in secs_cand]
 
     window_sizes_pts = []
     for ws in window_sizes:
-        delta = pd.Timedelta(ws)
-        pts = int(delta / freq) if delta >= freq else 0
-        if 10 <= pts < max(len(df) // 4, 2):
+        pts = int(pd.Timedelta(ws) / freq)
+        if pts >= 10 and pts < N // 2:
             window_sizes_pts.append((pts, ws))
 
-    if not window_sizes_pts:
-        default_pts = max(2, len(df) // 2)
-        ws_delta = default_pts * freq
-        ws_str = pd.tseries.frequencies.to_offset(ws_delta).freqstr
-        window_sizes_pts.append((default_pts, ws_str))
-
-    if len(df) > max_points:
-        idx = np.linspace(0, len(df) - 1, max_points, dtype=int)
+    if N > max_points:
+        idx = np.linspace(0, N - 1, max_points, dtype=int)
         df = df.iloc[idx]
-
-    def eval_window(values: np.ndarray, ws_pts: int, ws_str: str):
-        if len(values) < ws_pts or ws_pts >= len(values):
-            return None
-        try:
-            segs = np.lib.stride_tricks.sliding_window_view(values, ws_pts)
-        except ValueError:
-            return None
-        if segs.shape[0] < 2:
-            return None
-
-        segs = segs.astype(np.float32)
-        variances = compute_variances(segs)
-        idx_sorted = argsort_desc(variances)
-        segs = segs[idx_sorted[:max_segments]]
-        segs = segs[~np.isnan(segs).any(axis=1)]
-        if len(segs) < 2:
-            return None
-
-        segs = normalize_segments(segs)
-        index = faiss.IndexFlatL2(ws_pts)
-        index.add(segs)
-        dists, _ = index.search(segs, 2)
-        nn = dists[:, 1]
-        stability = np.median(nn) / ws_pts
-        density = (nn < stability * 2.5).sum() / len(nn)
-        return (ws_pts, ws_str, stability, density)
-
-    num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
-    if not num_cols:
-        raise ValueError("No numeric columns available.")
-
-    results_by_ws = {ws_str: {"stability": [], "density": [], "pts": pts} for pts, ws_str in window_sizes_pts}
-
-    for col in num_cols:
-        vals = df[col].values
-        res = Parallel(n_jobs=n_jobs)(
-            delayed(eval_window)(vals, pts, ws_str)
-            for pts, ws_str in window_sizes_pts
-        )
-        for r in res:
-            if r is None:
-                continue
-            pts, ws_str, stab, dens = r
-            results_by_ws[ws_str]["stability"].append(stab)
-            results_by_ws[ws_str]["density"].append(dens)
+        N = len(df)
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    if not numeric_cols:
+        raise ValueError("No numeric columns")
+    data = df[numeric_cols].values.astype(float)
 
     aggregated = []
-    for ws_str, metrics in results_by_ws.items():
-        if not metrics["stability"]:
-            continue
-        med_stab = np.median(metrics["stability"])
-        mean_dens = np.mean(metrics["density"])
-        aggregated.append((metrics["pts"], ws_str, med_stab, mean_dens))
+    global_noise = np.nanmean(np.std(data, axis=0))
 
-    aggregated.sort(key=lambda x: x[2])  # tri par stabilité uniquement
+    for pts, ws_str in window_sizes_pts:
+        try:
+            mp = stumpy.stump(data[:, 0], m=pts) if data.shape[1] == 1 else stumpy.mstump(data.T, m=pts)
+            profile = (mp[:, 0] if data.shape[1] == 1 else mp[-1])
+            profile = np.array(profile, dtype=np.float64)
+            profile = profile[~np.isnan(profile)]
+            if len(profile) < 2:
+                continue
+
+            mean_p = profile.mean()
+            p90 = np.percentile(profile, 90)
+            p98 = np.percentile(profile, 98)
+            disco_ratio = (profile > 2 * np.median(profile)).mean()
+            grad = np.abs(np.diff(profile)).mean()
+
+            blocks = np.array_split(profile, 10)
+            local_vars = [np.var(b) for b in blocks if len(b) > 1]
+            local_var_med = np.median(local_vars) if local_vars else np.var(profile)
+
+            motif_score = 1 / ((mean_p + p90) * (local_var_med + 1e-6))
+            disco_sep = max(0.001, p98 - p90)
+            score = 0.6 * motif_score + 0.2 * disco_sep + 0.2 / (grad + 1e-6)
+
+            if disco_ratio > 0.1:
+                score *= 0.5
+            if global_noise > 0.25:
+                score *= 0.8
+
+            score /= (1 + pts / 3000)
+            aggregated.append((pts, ws_str, score))
+
+        except Exception as e:
+            if verbose:
+                print(f"Erreur fenêtre {pts}: {e}")
+            continue
+
+    aggregated = [t for t in aggregated if not np.isnan(t[2])]
+    aggregated.sort(key=lambda x: -x[2])
     return aggregated[:k]
+
+
 
 def cluster_dimensions(
     df: Union[pd.DataFrame, List[pd.DataFrame]],
@@ -767,9 +791,8 @@ def cluster_dimensions(
             tril = matrix.where(np.tril(np.ones(matrix.shape), -1).astype(bool))
             return tril.stack().mean()
 
-        # 🔍 Nouvelle fonction : diversité de familles
         def diverse_enough(cols):
-            families = set(re.sub(r"_(\d+)$", "", c) for c in cols)
+            families = set(c.rsplit("_", 1)[0] for c in cols)
             return len(families) > 1
 
         sorted_clusters = sorted(
@@ -783,7 +806,7 @@ def cluster_dimensions(
         for cluster_cols in sorted_clusters:
             if len(clusters) >= top_k:
                 break
-            clusters.append(cluster_cols[:group_size] + ["timestamp"])
+            clusters.append(cluster_cols[:group_size+1] + ["timestamp"])
         if display_info:
             print("\n[CLUSTERING]")
             print("\n Cross correlation between columns in each clusters :")
@@ -833,7 +856,7 @@ def cluster_dimensions(
         units = defaultdict(set)
         for col in cols:
             try:
-                modality, idx = col.split("_")
+                modality, idx = col.rsplit("_", 1)
                 units[idx].add(modality)
             except ValueError:
                 continue
@@ -843,14 +866,18 @@ def cluster_dimensions(
 
         max_modalities = max(len(mods) for mods in units.values())
 
-        complete_indices = [idx for idx, mods in units.items() if len(mods) == max_modalities]
+        min_modalities = max(1, max_modalities // 1.5)
 
-        complete_cols = [c for c in cols if c.split("_")[1] in complete_indices]
+        complete_indices = [(idx) for idx, mods in sorted(units.items(), key=lambda x: int(x[0])) if len(mods) >= min_modalities]
+        
+        complete_cols = [
+            c for c in cols if c.rsplit("_", 1)[1] in complete_indices
+        ]
 
         if 'timestamp' in cluster_cols:
             complete_cols.append('timestamp')
 
-        return complete_cols if complete_indices else []
+        return complete_cols
 
     clusters = [filter_cluster_to_complete_units(c) for c in clusters]
     clusters = [c for c in clusters if c] 
@@ -911,6 +938,8 @@ def pre_processed(
 
     def get_window_size(df, fallback_len):
         if window_size is not None:
+            if window_size >= len(df) // 2:
+                raise ValueError("Window size is too large for the signal length.")
             return window_size
         try:
             win_list = define_m(df)

@@ -58,7 +58,7 @@ The user provides either a path to a CSV folder, CSV files or a pandas DataFrame
 
 ### Preprocessing & Alignment
 
-All input time series are synchronized to a common time grid. Each series is first interpolated individually to fill small gaps (up to a certain limit) and converted to a uniform time frequency	. If multiple DataFrames are provided, the library finds a median sampling interval and aligns all series on that grid, truncating or extending as needed. Series with incompatible frequencies or insufficient overlap may be dropped to ensure a coherent dataset.
+All input time series are synchronized to a common time grid. Each series is first interpolated individually to fill small gaps (up to a certain limit) and keep dimensions with dominante frequency. If multiple DataFrames are provided, the library finds a median sampling interval and aligns all series on that grid, truncating or extending as needed. Series with incompatible frequencies or insufficient overlap may be dropped to ensure a coherent dataset.
 
 
 ### Dimensionality Reduction (optional)
@@ -141,7 +141,7 @@ This module handles the preparation and cleaning of raw time series. Its main fu
 This module manages the computation of matrix profiles, dispatching to univariate or multivariate methods depending on the input:
 
 
-- **matrix_profile()**: Determines whether to treat input data as a single DataFrame or a list of clustered DataFrames. If needed, it runs jobs in parallel to compute each matrix profile efficiently.
+- **matrix_profile()**: Determines whether to treat input data as a single DataFrame or a list of clustered DataFrames.
 
 
 - **matrix_profile_process()**: Computes the profile and calls the appropriate motif/discord discovery method depending on dimensionality.
@@ -159,7 +159,7 @@ The function supports parameters such as max_motifs, discord_top_pct, and mode t
   - **discover_patterns_stumpy_mixed()**: For univariate time series. Computes matrix profile using stump, identifies motifs as repeating subsequences with small profile distances, and extracts discords as subsequences with high distances.
 
 
-  - **discover_patterns_mstump_mixed()**: For multivariate time series. Computes multi-dimensional profiles using mstump, applies dimension reduction via MDL (Minimum Description Length) where needed, and discovers motif patterns and anomalous subsequences across dimensions.
+  - **discover_patterns_mstump_mixed()**: For multivariate time series. Computes multi-dimensional profiles using mstump, applies dimension reduction via MDL (Minimum Description Length) if no cluster, and discovers motif patterns and anomalous subsequences across dimensions.
 
 
   - **exclude_discords()**: Refines the discord selection to avoid trivial overlaps and ensures the anomalies returned are both significant and temporally distinct.
