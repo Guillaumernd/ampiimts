@@ -284,15 +284,14 @@ def interpolate(
 
     # Keep only remaining columns in the mask
     new_nan_mask = new_nan_mask[df.columns]
-
-    # Index cleaning
-    # Use the "timestamp" column as index if present
-    if "timestamp" in df.columns:
+    # Handle timestamp column or index
+    if isinstance(df.index, pd.DatetimeIndex):
+        pass  # Already set correctly
+    elif "timestamp" in df.columns:
         df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
         df = df.set_index("timestamp")
     else:
         raise ValueError("The 'timestamp' column is required for interpolation.")
-
     df.index = df.index.tz_localize(None)
     df = df[df.index.notna()]
     df = df[~df.index.duplicated(keep="first")]
@@ -634,10 +633,6 @@ def compute_variances(segs: np.ndarray) -> np.ndarray:
             var += (segs[i, j] - mean) ** 2
         variances[i] = var / m
     return variances
-
-@njit
-def argsort_desc(arr: np.ndarray) -> np.ndarray:
-    return np.argsort(arr)[::-1]
 
 
 def define_m(
@@ -1037,7 +1032,7 @@ def pre_processed(
     cluster: bool = False,
     mode: str = 'hybrid',
     top_k_cluster: int = 4,
-    group_size: int = 6,
+    group_size: int = 16,
     display_info: bool = False,
     smart_interpolation: bool = True,
 ) -> Union[pd.DataFrame, List[pd.DataFrame], List[List[pd.DataFrame]]]:

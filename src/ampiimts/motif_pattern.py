@@ -310,7 +310,7 @@ def discover_patterns_mstump_mixed(
     # if d < 2:
     #     raise ValueError("Il faut au moins 2 dimensions.")
     
-    if not cluster and d < 2 :
+    if not cluster :
         # 1) Full matrix profile
         P, I = stumpy.mstump(X, m=window_size, normalize=False, discords=False)
 
