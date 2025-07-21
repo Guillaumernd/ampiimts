@@ -170,7 +170,6 @@ def test_clustering_with_numeric_column_names():
     """
     folder = "tests/data/air_bejin"
     input_data = load_and_concat_csvs_from_folder(folder)
-    i = 0
     # Rename columns (except timestamp) to 1, 2, 3, ...
     i = 1
     for df in input_data:
