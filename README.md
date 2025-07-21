@@ -1,5 +1,7 @@
 # AMPIIMTS
 
+[![Tests CI](https://github.com/Guillaumernd/ampiimts/actions/workflows/python-tests.yml/badge.svg)](https://github.com/Guillaumernd/ampiimts/actions/workflows/python-tests.yml)
+
 Adaptive Matrix Profile Indexing for irregular multivariate time series.
 
 ## Features
