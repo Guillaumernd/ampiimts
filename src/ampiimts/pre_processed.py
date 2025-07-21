@@ -136,7 +136,14 @@ def synchronize_on_common_grid(
         dfs_synced.append(df_synced)
 
     # 6. Concatenate into a multivariate DataFrame
-    renamed_dfs = [df.add_suffix(f"_{i}") for i, df in enumerate(dfs_synced)]
+    all_column_names = [col for df in dfs_synced for col in df.columns]
+    has_duplicates = len(set(all_column_names)) < len(all_column_names)
+
+    if has_duplicates:
+        renamed_dfs = [df.add_suffix(f"_{i}") for i, df in enumerate(dfs_synced)]
+    else:
+        renamed_dfs = dfs_synced
+
     df_combined = pd.concat(renamed_dfs, axis=1)
     df_combined.index.name = "timestamp"
 
@@ -1014,9 +1021,14 @@ def cluster_dimensions(
             complete_cols.append('timestamp')
 
         return complete_cols
+            
+    def column_names_use_suffix(df):
+        return all("_" in col for col in df.columns if col != "timestamp")
 
-    clusters = [filter_cluster_to_complete_units(c) for c in clusters]
-    clusters = [c for c in clusters if c] 
+    apply_complete_unit_filter = all(column_names_use_suffix(df) for df in df_list)
+    if apply_complete_unit_filter:
+        clusters = [filter_cluster_to_complete_units(c) for c in clusters]
+        clusters = [c for c in clusters if c]
     return clusters
 
 

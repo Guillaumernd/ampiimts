@@ -156,3 +156,45 @@ def test_multivariate_with_dataframe_input(window_size):
     assert isinstance(result, list)
     assert len(result) == len(interpolated) == len(normalized)
     assert result[0]["window_size"][1] == 24
+
+def test_clustering_with_numeric_column_names():
+    """
+    Test that `ampiimts` works correctly when input columns are renamed to integers (1, 2, 3, ...)
+    with clustering enabled. This simulates anonymized sensor data.
+
+    Assertions
+    ----------
+    - The pipeline does not fail when columns are purely numeric.
+    - Interpolated and normalized outputs are lists of DataFrames (due to clustering).
+    - Result is also a list matching the number of clusters.
+    """
+    folder = "tests/data/air_bejin"
+    input_data = load_and_concat_csvs_from_folder(folder)
+    i = 0
+    # Rename columns (except timestamp) to 1, 2, 3, ...
+    i = 1
+    for df in input_data:
+        nb_cols = len(df.columns)
+        new_columns = [str(j) for j in range(i, i + nb_cols)]
+        df.columns = new_columns
+        i += nb_cols
+
+    interpolated, normalized, result = ampiimts(
+        input_data,
+        top_k_cluster=1,
+        cluster=True,
+        motif=False,
+        most_stable_only=False,
+        smart_interpolation=True,
+        max_len=750,
+        visualize=False,
+        display_info=False,
+    )
+
+    # Assertions
+    assert isinstance(interpolated, list)
+    assert isinstance(normalized, list)
+    assert isinstance(result, list)
+    assert all(isinstance(df, pd.DataFrame) for df in interpolated)
+    assert all(isinstance(df, pd.DataFrame) for df in normalized)
+    assert len(result) == len(interpolated) == len(normalized)
