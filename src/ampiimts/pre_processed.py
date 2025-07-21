@@ -1109,7 +1109,7 @@ def pre_processed(
 
     def get_window_size(df, fallback_len):
         if window_size is not None:
-            if window_size >= len(df) // 2:
+            if int(pd.Timedelta(window_size) / df.index.to_series().diff().median()) >= len(df) // 2:
                 raise ValueError("Window size is too large for the signal length.")
             return window_size
         try:

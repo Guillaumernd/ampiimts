@@ -7,6 +7,8 @@ without referencing their submodules.
 from .pre_processed import (
     interpolate,
     _compute_aswn,
+    normalize_segments,
+    compute_variances,
     aswn_with_trend,
     normalization,
     pre_processed,
@@ -43,6 +45,8 @@ __all__ = [
     "interpolate",
     "synchronize_on_common_grid",
     "_compute_aswn",
+    "compute_variances",
+    "normalize_segments",
     "aswn_with_trend",
     "normalization",
     "pre_processed",
