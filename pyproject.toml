@@ -27,7 +27,8 @@ dependencies = [
 test = [
     "pytest>=7.0.0",
     "pytest-cov>=6.1.1",
-    "codecov"
+    "codecov",
+    "pytest-memray>=1.7.0",
 ]
 
 [build-system]

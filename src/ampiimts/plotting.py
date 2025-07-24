@@ -1,4 +1,19 @@
-"""Plotting utilities for time series results."""
+"""
+Module `plotting`: Visualization utilities for multivariate time series motifs and discords.
+
+This module provides a set of functions for visualizing the output of motif and discord
+discovery algorithms on multivariate time series. It supports both raw data plotting
+and advanced visualizations such as:
+
+Key Features:
+-------------
+- Plotting of multivariate time series with motif and discord overlays.
+- Heatmaps of multidimensional matrix profiles.
+- Overlaid motif segments per dimension for pattern comparison.
+- Support for clustered datasets and multiple motif result structures.
+
+All visualizations are built using matplotlib and support both single and clustered datasets.
+"""
 
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates

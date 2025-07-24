@@ -1,4 +1,25 @@
-"""Utilities for computing matrix profiles."""
+"""
+Module `matrix_profile`: High-level pipeline for motif and anomaly analysis.
+
+This module provides a main interface to analyze patterns and discords in time series,
+handling multivariate, noisy, or irregular data with adaptive strategies.
+
+Main Features:
+--------------
+- Automates the selection and execution of motif/discord detection using `motif_pattern.py`.
+- Applies MDL (Minimum Description Length) to select relevant subspaces in multivariate series.
+- Integrates preprocessing: interpolation, normalization, clustering, and alignment.
+- Supports processing of single or multiple DataFrames.
+- Allows visualization and export of the most dominant motifs or anomalies.
+
+Difference with `motif_pattern.py`:
+-----------------------------------
+- `matrix_profile.py` is a **complete pipeline** that prepares the data, selects parameters,
+  runs detection, and post-processes results.
+- `motif_pattern.py` provides the **core low-level algorithms** for pattern matching.
+
+Use this module when you want a ready-to-use, fully automated motif/discord detection workflow.
+"""
 
 from typing import List, Optional, Union
 import pandas as pd

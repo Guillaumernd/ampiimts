@@ -7,8 +7,6 @@ without referencing their submodules.
 from .pre_processed import (
     interpolate,
     _compute_aswn,
-    normalize_segments,
-    compute_variances,
     aswn_with_trend,
     normalization,
     pre_processed,
@@ -32,7 +30,7 @@ from .matrix_profile import (
 from .motif_pattern import (
     discover_patterns_stumpy_mixed,
     discover_patterns_mstump_mixed,
-    exclude_discords,
+    find_discords,
     compute_univariate_matrix_profiles,
 )
 
@@ -45,8 +43,6 @@ __all__ = [
     "interpolate",
     "synchronize_on_common_grid",
     "_compute_aswn",
-    "compute_variances",
-    "normalize_segments",
     "aswn_with_trend",
     "normalization",
     "pre_processed",
@@ -62,6 +58,6 @@ __all__ = [
     "ampiimts",
     "process",
     "matrix_profile_process",
-    "exclude_discords",
+    "find_discords",
     "compute_univariate_matrix_profiles",
 ]

@@ -1,8 +1,31 @@
-"""High level pipeline for motif and discord discovery.
-
-The function reads one or several time series, preprocesses them and
-computes the matrix profile in order to detect motifs and discords.
 """
+Module `ampiimts`: High-level pipeline for time series motif and discord discovery.
+
+This module provides a unified interface (`ampiimts`) to process univariate or multivariate
+time series by applying interpolation, normalization, clustering (optional), and matrix
+profile analysis to extract meaningful motifs and discords.
+
+Main Features
+-------------
+- Automatically handles missing data and irregular time sampling.
+- Performs adaptive normalization (ASWN) and optional smart interpolation.
+- Supports both univariate and multivariate data, with or without clustering.
+- Detects motifs (repeated patterns) and discords (outliers) using matrix profile.
+- Provides visualization tools to inspect results (heatmaps, overlays, etc.).
+- Accepts inputs as DataFrames, lists of Dataframes and folders of CSVs.
+
+Typical Use Cases
+-----------------
+- Sensor signal analysis (IoT, industrial monitoring).
+- Multivariate time series pattern discovery.
+- Anomaly and novelty detection in time-indexed data.
+
+Public Entry Points
+-------------------
+- `ampiimts(...)`: Main function for one-shot time series analysis with full configuration.
+- `process(...)`: Lower-level interface for already-loaded DataFrames.
+"""
+
 from typing import Tuple, Union, List, Dict, Any
 from .matrix_profile import (
     matrix_profile,
@@ -98,7 +121,6 @@ def process(
         ``(interpolated, normalized, result)`` containing processed
         dataframes and the matrix profile result.
     """
-    # Si DataFrame unidimensionnel → désactive automatiquement les traitements multivariés
     if isinstance(pds, pd.DataFrame):
         numeric_cols = pds.select_dtypes(include=[float, int]).columns
         if len(numeric_cols) == 1:
@@ -122,13 +144,24 @@ def process(
     )
 
     if pds_normalized is None:
-        return None, None, None
+        raise ValueError("All dataframes have too many Nans or are too noisy")
 
-    smart_interpolation, most_stable_only = (False, False) if not cluster else (
-        smart_interpolation, most_stable_only)
-    most_stable_only2 = True if most_stable_only and smart_interpolation else False
-    most_stable_only = True if not smart_interpolation and most_stable_only else False
+    # If clustering is disabled, force both flags to False
+    if not cluster:
+        smart_interpolation = False
+        most_stable_only = False
 
+    # If both smart interpolation and most_stable_only are enabled,
+    # defer most_stable_only to the second pass
+    if smart_interpolation and most_stable_only:
+        most_stable_only2 = True   # Apply it in the second pass
+        most_stable_only = False   # Disable for the first pass
+    else:
+        most_stable_only2 = False  # No need otherwise
+
+    # -----------------------------
+    # First matrix profile pass
+    # -----------------------------
     matrix_profile_result = matrix_profile(
         pds_normalized,
         n_jobs=4,
@@ -137,18 +170,22 @@ def process(
         max_matches=max_matches,
         cluster=cluster,
         motif=motif,
-        most_stable_only=most_stable_only,
+        most_stable_only=most_stable_only,          # Will be False if deferred
         smart_interpolation=smart_interpolation,
         printunidimensional=printunidimensional,
     )
-    if matrix_profile_result is None or matrix_profile_result == []:
-        return pds_interpolated, pds_normalized, None
+
+    # -----------------------------
+    # Second pass if smart interpolation is enabled
+    # -----------------------------
     if smart_interpolation:
+        # Fill NaNs based on column similarity using the first matrix profile
         pds_normalized = interpolate_all_columns_by_similarity(
             pds=pds_normalized_without_nan,
             matrix_profiles=matrix_profile_result,
         )
-            
+
+        # Recompute the matrix profile after smart interpolation
         matrix_profile_result = matrix_profile(
             pds_normalized,
             n_jobs=4,
@@ -157,8 +194,8 @@ def process(
             max_matches=max_matches,
             cluster=cluster,
             motif=motif,
-            most_stable_only=most_stable_only2,
-            smart_interpolation=False,
+            most_stable_only=most_stable_only2,     # Now applied if deferred
+            smart_interpolation=False,              # Already applied
             printunidimensional=printunidimensional,
         )
 
@@ -284,16 +321,38 @@ def ampiimts(
     """
     if isinstance(data, str) and os.path.isfile(data):
         df = pd.read_csv(data)
-    if isinstance(data, str) and os.path.isdir(data):
+        df = df.iloc[:max_len] if max_len else df
+        return process(
+            df,
+            gap_multiplier,
+            min_std,
+            min_valid_ratio,
+            alpha,
+            window_size,
+            sort_by_variables,
+            cluster,
+            top_k_cluster,
+            visualize,
+            max_motifs,
+            discord_top_pct,
+            max_matches,
+            motif,
+            group_size,
+            display_info,
+            most_stable_only,
+            smart_interpolation,
+            printunidimensional,
+            only_heat_map,
+        )
+    elif isinstance(data, str) and os.path.isdir(data):
         pds = []
         with os.scandir(data) as entries:
             for entry in entries:
                 if entry.is_file() and entry.name.endswith('.csv'):
-                    try:
-                        df = pd.read_csv(os.path.join(data, entry.name))
-                        pds.append(df.iloc[:max_len] if max_len else df)
-                    except Exception:
-                        continue
+                    df = pd.read_csv(os.path.join(data, entry.name))
+                    pds.append(df.iloc[:max_len] if max_len else df)
+        if not pds:
+            raise ValueError("[ERROR] No .csv files found in the folder.")
         return process(
             pds,
             gap_multiplier,

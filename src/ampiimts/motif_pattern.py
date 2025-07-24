@@ -1,4 +1,25 @@
-"""Helper functions for motif and discord discovery."""
+"""
+Module `motif_pattern`: Fine-grained motif and discord detection in time series.
+
+This module provides low-level functions for identifying repeating patterns (motifs)
+and outliers (discords) in both univariate and multivariate time series.
+
+Main Features:
+--------------
+- Uses STUMPY algorithms (`stump`, `mstump`) to compute matrix profiles.
+- Extracts the most representative motifs using `mmotifs` with advanced filtering.
+- Detects discords by finding subsequences with the largest distances to their nearest neighbors.
+- Supports multivariate detection with or without clustering of correlated sensors.
+- Computes stability and density scores for ranking and filtering results.
+- Compatible with adaptive or fixed window sizes.
+
+Note:
+-----
+This module does **not** perform preprocessing. It assumes the input data has already
+been cleaned, interpolated, and normalized.
+
+This module is called by `matrix_profile.py` and should be used for **core motif/discord logic** only.
+"""
 
 import stumpy
 import faiss
@@ -11,7 +32,7 @@ import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 
-def exclude_discords(
+def find_discords(
     mp: Union[np.ndarray, pd.DataFrame],
     window_size: int,
     discord_top_pct: float = 0.04,
@@ -177,7 +198,7 @@ def discover_patterns_stumpy_mixed(
     )
 
     # Detect discords
-    discords = exclude_discords(
+    discords = find_discords(
         mp, window_size, discord_top_pct=discord_top_pct,
         X=X, max_nan_frac=0.1, margin=10
     )
@@ -309,11 +330,10 @@ def discover_patterns_mstump_mixed(
     d, n = X.shape
     # if d < 2:
     #     raise ValueError("Il faut au moins 2 dimensions.")
-    
+    P, I = (None, None)
     if not cluster :
         # 1) Full matrix profile
-        P, I = stumpy.mstump(X, m=window_size, normalize=False, discords=False)
-
+        P, I = stumpy.mstump(df[:5000].to_numpy(dtype=float).T, m=window_size, normalize=False, discords=False)
         # 2) Dimension selection via MDL
         motif_indices = np.argsort(P[0])[:min(20, P.shape[1])]
         counts = Counter()
@@ -343,10 +363,10 @@ def discover_patterns_mstump_mixed(
         df = df.iloc[:, selected_dims]
         d = X.shape[0]
 
-    if motif and not smart_interpolation and not most_stable_only:
 
-        # 3) Reduced matrix profile (motifs + discords)
-        P, I = stumpy.mstump(X, m=window_size, normalize=False, discords=False)
+    if motif and not smart_interpolation and not most_stable_only:
+        if P is None or I is None:
+            P, I = stumpy.mstump(X, m=window_size, normalize=False, discords=False)
         # 4) Run mmotifs
         motif_distances, motif_indices, motif_subspaces, motif_mdls = stumpy.mmotifs(
             X, P, I,
@@ -443,7 +463,7 @@ def discover_patterns_mstump_mixed(
         )
         
         # update motif
-        if motif:
+        if motif and not smart_interpolation:
             P, I = stumpy.mstump(X, m=window_size, normalize=False, discords=False)
             motif_distances, motif_indices, motif_subspaces, motif_mdls = stumpy.mmotifs(
                 X, P, I,
@@ -455,7 +475,7 @@ def discover_patterns_mstump_mixed(
 
     if not smart_interpolation:
         # Filtered discords
-        disc_idxs = exclude_discords(
+        disc_idxs = find_discords(
             mp=P_disc,
             window_size=window_size,
             discord_top_pct=discord_top_pct,

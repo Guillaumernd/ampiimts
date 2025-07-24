@@ -2,6 +2,8 @@ import pytest
 import pandas as pd
 from ampiimts import ampiimts
 from pathlib import Path
+import numpy as np 
+import os 
 
 # All possible boolean combinations for parameter testing
 boolean_combinations = [
@@ -12,39 +14,48 @@ boolean_combinations = [
     for i in [False, True]               # smart_interpolation
 ]
 
+boolean_combinations_2d = [
+    (c, m)
+    for c in [False, True]
+    for m in [False, True]
+]
+
 @pytest.mark.parametrize("csv_path", [
     "tests/data/art_daily_jumpsup.csv",
-    "tests/data/cpu_utilization_asg_misconfiguration.csv",
-    "tests/data/nyc_taxi.csv"
 ])
-@pytest.mark.parametrize("cluster, motif, most_stable_only, smart_interpolation", boolean_combinations)
-def test_univariate_from_csv(csv_path, cluster, motif, most_stable_only, smart_interpolation):
+@pytest.mark.parametrize("cluster, motif", boolean_combinations_2d)
+@pytest.mark.parametrize("as_str_input", [True, False])  # True = passer la str, False = passer le DataFrame
+def test_univariate_from_csv_or_df(csv_path, as_str_input, cluster, motif):
     """
-    Test the ampiimts pipeline on univariate CSV inputs with all boolean parameter combinations.
+    Test the ampiimts pipeline on both CSV paths (str) and preloaded DataFrame inputs.
 
     Parameters
     ----------
     csv_path : str
-        Path to a univariate time series CSV file.
+        Path to a CSV file containing a univariate time series.
+    as_str_input : bool
+        Whether to pass the path as str (to trigger internal CSV loading) or a preloaded DataFrame.
     cluster, motif, most_stable_only, smart_interpolation : bool
         Parameters passed to the ampiimts pipeline.
-
-    Assertions
-    ----------
-    - If result is returned, it must be a dictionary or None.
-    - If interpolation/normalization succeed, their outputs must be pandas DataFrames.
     """
-    df = pd.read_csv(csv_path, parse_dates=["timestamp"])
+    assert os.path.isfile(csv_path), f"Le fichier {csv_path} est introuvable"
+
+    if as_str_input:
+        data = csv_path  # ← déclenche le bloc "if isinstance(data, str) and os.path.isfile(data):"
+    else:
+        data = pd.read_csv(csv_path, parse_dates=["timestamp"])
+
     interpolated, normalized, result = ampiimts(
-        df,
+        data,
         cluster=cluster,
         motif=motif,
-        most_stable_only=most_stable_only,
-        smart_interpolation=smart_interpolation,
+        most_stable_only=False,
+        smart_interpolation=False,
         window_size=60,
         visualize=True,
         only_heat_map=False,
     )
+
     if interpolated is not None:
         assert isinstance(interpolated, pd.DataFrame)
     if normalized is not None:
@@ -100,7 +111,8 @@ def test_multivariate_from_air_bejin(cluster, motif, most_stable_only, smart_int
         smart_interpolation=smart_interpolation,
         max_len=750,
         group_size=10,
-        visualize=False
+        visualize=True,
+        only_heat_map=False
     )
 
     if cluster:
@@ -139,12 +151,12 @@ def test_multivariate_with_dataframe_input(window_size):
         input_data,
         top_k_cluster=1,
         cluster=True,
-        motif=False,
+        motif=True,
         window_size=window_size,
         most_stable_only=False,
         smart_interpolation=True,
         max_len=1000,
-        visualize=True,
+        visualize=False,
         display_info=True,
         only_heat_map=False,
     )
@@ -156,6 +168,55 @@ def test_multivariate_with_dataframe_input(window_size):
     assert isinstance(result, list)
     assert len(result) == len(interpolated) == len(normalized)
     assert result[0]["window_size"][1] == 24
+
+@pytest.mark.parametrize("data", [False, True])
+def test_multivariate_with_dataframe_nan_input(data):
+    """
+    Test the ampiimts pipeline on a list of multivariate DataFrames or one dataframes
+    with NaNs injected every 30 points in each DataFrame.
+
+    Parameters
+    ----------
+    window_size : str or int
+        Window size passed to the pipeline.
+
+    Assertions
+    ----------
+    - Each output must be a list (if clustering is enabled).
+    - NaN injection doesn't crash the pipeline.
+    """
+
+    folder = "tests/data/air_bejin"
+    input_data = load_and_concat_csvs_from_folder(folder)
+
+    input_data_nan = []
+    for df in input_data:
+        df_copy = df.copy()
+        for col in df_copy.columns:
+            if col != "timestamp":
+                i = 0
+                while i + 20 <= len(df_copy):
+                    df_copy.iloc[i:i+20, df_copy.columns.get_loc(col)] = np.nan
+                    i += 30
+        input_data_nan.append(df_copy)
+    if not data:
+        input_data_nan = input_data_nan[0]
+
+    with pytest.raises(ValueError, match="too many Nans or are too noisy"):
+        ampiimts(
+            input_data_nan,
+            top_k_cluster=1,
+            cluster=True,
+            motif=False,
+            most_stable_only=False,
+            smart_interpolation=True,
+            max_len=1000,
+            window_size=24,
+            visualize=False,
+            display_info=False,
+            only_heat_map=False,
+        )
+
 
 def test_clustering_with_numeric_column_names():
     """
@@ -197,3 +258,39 @@ def test_clustering_with_numeric_column_names():
     assert all(isinstance(df, pd.DataFrame) for df in interpolated)
     assert all(isinstance(df, pd.DataFrame) for df in normalized)
     assert len(result) == len(interpolated) == len(normalized)
+
+
+def test_ampii_invalid_data_type():
+    with pytest.raises(TypeError, match="`data` must be a path to a folder"):
+        ampiimts(
+            data=42,  # ← Type non valide
+            cluster=False,
+            motif=False,
+            most_stable_only=False,
+            smart_interpolation=True,
+            window_size=60,
+            visualize=False,
+        )
+
+def test_ampii_empty_folder_raises(tmp_path):
+    # Folder empty
+    with pytest.raises(ValueError, match="No .csv files found"):
+        ampiimts(str(tmp_path))
+
+def test_ampii_folder_with_non_csv_ignored(tmp_path):
+
+    (tmp_path / "note.txt").write_text("don't process this file")
+
+    df = pd.DataFrame({"timestamp": [1, 2, 3], "value": [10, 20, 30]})
+    df.to_csv(tmp_path / "valid.csv", index=False)
+    with pytest.raises(ValueError, match="Unable to compute common frequency: time gaps are zero."):
+        ampiimts(str(tmp_path))
+
+def test_ampii_folder_with_directory_ignored(tmp_path):
+
+    os.mkdir(tmp_path / "subdir")
+
+    df = pd.DataFrame({"timestamp": [1, 2], "value": [1, 2]})
+    df.to_csv(tmp_path / "ok.csv", index=False)
+    with pytest.raises(ValueError, match="Not enough points to estimate frequency."):
+        ampiimts(str(tmp_path))

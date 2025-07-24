@@ -241,6 +241,7 @@ The results—whether from unidimensional, full multivariate, or reduced cluster
 # 
 Altogether, these findings validate AMPIIMTS as a reliable, modular, and explainable tool for time series motif discovery and anomaly detection. Its ability to integrate interpolation, clustering, dimensionality reduction, and matrix profiling makes it highly suited for environmental monitoring and any domain requiring interpretable unsupervised time series analysis.
 
+![AMPIIMTS Flowchart](Features_ampiimts_package.drawio.png)
 
 ## References:
 

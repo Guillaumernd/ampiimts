@@ -1,4 +1,23 @@
-"""Preprocessed module for panda DataFrame with timestamp column."""
+"""
+Module `pre_processed`: Time series preprocessing and normalization utilities.
+
+This module provides all necessary functions for preparing time series data,
+with a focus on multivariate and irregularly sampled datasets. It includes
+advanced preprocessing utilities such as interpolation, adaptive normalization,
+and clustering of correlated dimensions.
+
+Key Features:
+-------------
+- Smart interpolation of irregular time series with NaN handling 'interpolate()'
+    Automatic removal of constant plateaus  and noise in time series. 
+- Adaptive sliding-window normalization (ASWN). '_compute_aswn()' @njit ==> low level code.
+    Optionnal : alpha to keep the signal trend with 'aswn_with_trend()'
+- Clustering of correlated dimensions for group-wise processing. 'cluster_dimensions()'
+- Synchronization of multiple series on a common timestamp grid with 'synchronize_on_common_grid()'
+- Fully configurable preprocessing pipeline for STUMPY/motif/discord usage woth 'pre_processed()'
+
+"""
+
 from typing import Union, List
 from collections import defaultdict
 from scipy.cluster.hierarchy import linkage
@@ -73,13 +92,15 @@ def synchronize_on_common_grid(
         for df in dfs_original
     ]
     dfs = [df for df in dfs if not df.empty]
-
+    if all(df.empty for df in dfs):
+        raise ValueError("All dataframes have too many Nans or are too noisy")
     # 2. Compute sampling frequencies
     freqs = [df.index.to_series().diff().median() for df in dfs]
     freqs_seconds = [f.total_seconds() for f in freqs if pd.notna(f)]
     median_freq = np.median(freqs_seconds)
     common_freq = pd.to_timedelta(median_freq, unit="s")
-
+    if median_freq == 0.0:
+        raise ValueError("Unable to compute common frequency: time gaps are zero.")
     # 3. Filter DataFrames too far from the median frequency
     allowed_diff = median_freq * 0.2
     dfs_filtered = [
@@ -332,7 +353,7 @@ def interpolate(
 
     # Estimate sampling frequency
     idx = df_wo_outliers.index.unique().sort_values()
-    if len(idx) < 2:
+    if len(idx) < 3:
         raise ValueError("Not enough points to estimate frequency.")
 
     inferred = pd.infer_freq(idx)
@@ -607,40 +628,6 @@ def normalization(
         return None
     else:
         return df
-
-@njit
-def normalize_segments(segs: np.ndarray) -> np.ndarray:
-    n, m = segs.shape
-    for i in range(n):
-        mean = 0.0
-        std = 0.0
-        for j in range(m):
-            mean += segs[i, j]
-        mean /= m
-        for j in range(m):
-            std += (segs[i, j] - mean) ** 2
-        std = (std / m) ** 0.5
-        if std < 1e-8:
-            std = 1e-8
-        for j in range(m):
-            segs[i, j] = (segs[i, j] - mean) / std
-    return segs
-
-@njit
-def compute_variances(segs: np.ndarray) -> np.ndarray:
-    n, m = segs.shape
-    variances = np.empty(n, dtype=np.float32)
-    for i in range(n):
-        mean = 0.0
-        for j in range(m):
-            mean += segs[i, j]
-        mean /= m
-        var = 0.0
-        for j in range(m):
-            var += (segs[i, j] - mean) ** 2
-        variances[i] = var / m
-    return variances
-
 
 def define_m(
     df: pd.DataFrame,
@@ -1145,7 +1132,7 @@ def pre_processed(
         ) 
         if smart_interpolation:
             normalized_whithout_inter = normalization(
-                interpolated,
+                interpolate(df_group, gap_multiplier=gap_multiplier, propagate_nan=False),
                 min_std=min_std,
                 min_valid_ratio=min_valid_ratio,
                 alpha=alpha,
@@ -1189,19 +1176,27 @@ def pre_processed(
                 window_size=final_ws
             ) 
             return df_interpolate, df_normalize, None
-
-    # === Case 2 : one DataFrame ===
+    # === Case 2: one DataFrame ===
     df = data
+
+    # Interpolate missing values using the specified gap multiplier
     df_interpolate = interpolate(df.copy(), gap_multiplier=gap_multiplier)
+
+    # Determine the final window size based on the interpolated data
     final_ws = get_window_size(df_interpolate, len(df_interpolate))
+
+    # Normalize the data using adaptive z-normalization
     df_normalize = normalization(
         df_interpolate,
         min_std=min_std,
         min_valid_ratio=min_valid_ratio,
         alpha=alpha,
         window_size=final_ws
-    ) 
+    )
+
+    # Return the preprocessed versions
     return df_interpolate, df_normalize, None
+
 
 
 def interpolate_from_matrix_profile(
