@@ -72,23 +72,14 @@ def find_discords(
         An array of center indices for the selected discord windows.
     """
 
-    if isinstance(mp, pd.DataFrame):
-        P = mp.iloc[:, 0].values.astype(float)
-    else:
-        mp = np.asarray(mp)
+    mp = np.asarray(mp)
 
-        if mp.ndim == 2:
-            # Case: STUMP output
-            if mp.shape[1] == 4:  
-                P = np.asarray(mp[:, 0], dtype=float)
-            # Case: MSTUMP output (d, n-m+1)
-            else:  
-                P = np.nanmean(mp, axis=0)
-        else:
-            P = mp.astype(float)
-
-    if P.ndim == 2:
-        P = mp[-1].astype(float)
+    # Case: STUMP output
+    if mp.shape[1] == 4:  
+        P = np.asarray(mp[:, 0], dtype=float)
+    # Case: MSTUMP output (d, n-m+1)
+    else:  
+        P = np.nanmean(mp, axis=0)
 
     valid_idx = np.where(~np.isnan(P))[0]
     candidates = []
@@ -110,11 +101,6 @@ def find_discords(
             if margin > 0 and np.any((nan_indices >= start - margin) & (nan_indices < end + margin)):
                 continue
             candidates.append(idx)
-    else:
-        candidates = valid_idx.tolist()
-
-    if not candidates:
-        return np.array([], dtype=int)
 
     n_top = max(1, int(np.ceil(discord_top_pct * len(candidates))))
     top_group = sorted(candidates, key=lambda i: P[i], reverse=True)[:n_top]
@@ -153,9 +139,6 @@ def discover_patterns_stumpy_mixed(
     #column name 
     col_name = df.columns[0]  
 
-    # Retrieve the single value column regardless of its name
-    if df.shape[1] != 1:
-        raise ValueError("Le DataFrame doit contenir exactement une colonne.")
     # Use the first and only column
     X = df.iloc[:, 0].values
 
@@ -291,6 +274,7 @@ def discover_patterns_mstump_mixed(
     most_stable_only: bool = False,
     smart_interpolation: bool = True,
     printunidimensional: bool = False,
+    group_size: int = 5,
 ) -> dict:
     """Discover motifs and discords on multivariate signals.
 
@@ -319,6 +303,9 @@ def discover_patterns_mstump_mixed(
         similar sensors
     printunidimensional : bool, optional
         See unidimensional matri_profil
+    group_size : int, optional
+        limit dimensions with MDL algorithm when
+        cluster == False
 
     Returns
     -------
@@ -336,7 +323,9 @@ def discover_patterns_mstump_mixed(
         P, I = stumpy.mstump(df[:5000].to_numpy(dtype=float).T, m=window_size, normalize=False, discords=False)
         # 2) Dimension selection via MDL
         motif_indices = np.argsort(P[0])[:min(20, P.shape[1])]
-        counts = Counter()
+        # Compter les dimensions sélectionnées par MDL
+        counts = defaultdict(int)
+
         for idx in motif_indices:
             subseq_idx = np.full(X.shape[0], idx)
             nn_idx = np.full(X.shape[0], I[0][idx])
@@ -351,17 +340,12 @@ def discover_patterns_mstump_mixed(
                 for dim in subspace:
                     counts[dim] += 1
 
-        if not counts:
-            raise ValueError("MDL did not identify any active dimension.")
+        # Trier les dimensions selon leur fréquence (ordre décroissant)
+        sorted_dims = sorted(counts.items(), key=lambda x: x[1], reverse=True)
 
-        max_count = max(counts.values())
-        threshold = max(1, int(min_mdl_ratio * max_count))
-        selected_dims = [i for i, c in counts.items() if c >= threshold]
+        # Sélectionner les group_size meilleures dimensions
+        selected_dims = [dim for dim, _ in sorted_dims[:group_size]]
 
-        # Reduce dimensions
-        X = X[selected_dims, :]
-        df = df.iloc[:, selected_dims]
-        d = X.shape[0]
 
 
     if motif and not smart_interpolation and not most_stable_only:
@@ -443,9 +427,6 @@ def discover_patterns_mstump_mixed(
 
         if not smart_interpolation:
             P_disc, _ = stumpy.mstump(X, m=window_size, normalize=False, discords=True)
-        else:
-            P_disc = mp_full
-            motif = False
         # Update mp_full
         profile_len = n - window_size + 1
         center_idx = np.arange(profile_len) + window_size // 2
@@ -600,17 +581,11 @@ def compute_univariate_matrix_profiles(df: pd.DataFrame, window_size: int) -> pd
 
     for col in df.select_dtypes(include=[np.number]).columns:
         series = df[col].to_numpy(dtype=float)
-        if np.isnan(series).all():
-            mp = np.full(len(series), np.nan)
-        else:
-            try:
-                P = stumpy.stump(series, m=window_size)
-                mp_core = P[:, 0]
-                nan_start = np.full(window_size // 2, np.nan)
-                nan_end = np.full(window_size - window_size // 2 - 1, np.nan)
-                mp = np.concatenate([nan_start, mp_core, nan_end])
-            except Exception:
-                mp = np.full(len(series), np.nan)
+        P = stumpy.stump(series, m=window_size)
+        mp_core = P[:, 0]
+        nan_start = np.full(window_size // 2, np.nan)
+        nan_end = np.full(window_size - window_size // 2 - 1, np.nan)
+        mp = np.concatenate([nan_start, mp_core, nan_end])
 
         profiles[f"mp_dim_{col}"] = mp
 

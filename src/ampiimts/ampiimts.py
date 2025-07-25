@@ -173,6 +173,7 @@ def process(
         most_stable_only=most_stable_only,          # Will be False if deferred
         smart_interpolation=smart_interpolation,
         printunidimensional=printunidimensional,
+        group_size=group_size,
     )
 
     # -----------------------------
@@ -197,6 +198,7 @@ def process(
             most_stable_only=most_stable_only2,     # Now applied if deferred
             smart_interpolation=False,              # Already applied
             printunidimensional=printunidimensional,
+            group_size=group_size,
         )
 
     if visualize:

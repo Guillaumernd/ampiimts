@@ -52,27 +52,6 @@ def plot_multidim_patterns_and_discords(
     None
         Only displays a figure using ``matplotlib``.
     """
-    if result is None:
-        print("[INFO] No matrix profile data: only raw signals will be shown.")
-        fig, axs = plt.subplots(
-            df.shape[1], 1,
-            figsize=(20, 1.5 * df.shape[1]),
-            sharex=True,
-        )
-        if df.shape[1] == 1:
-            axs = [axs]
-        for i, col in enumerate(df.columns):
-            axs[i].plot(df.index, df[col], color="black", linewidth=0.8, label=col)
-            axs[i].set_ylabel(col)
-            axs[i].grid(True, linewidth=0.3, alpha=0.6)
-            axs[i].legend(loc="upper right", fontsize="x-small")
-            axs[i].xaxis.set_major_locator(mdates.AutoDateLocator())
-            axs[i].xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
-            axs[i].tick_params(axis="x", rotation=45, labelsize="small")
-        axs[-1].set_xlabel("Date")
-        plt.tight_layout()
-        plt.show()
-        return
 
     # --- Extract useful information from the result dictionary ---
     profile_df   = result["matrix_profile"]
@@ -157,6 +136,7 @@ def plot_multidim_patterns_and_discords(
         axs[dim].set_xlim(df.index.min(), df.index.max())
         fig1.tight_layout()
         plt.show()
+        plt.close(fig1)
 
     # === FIGURE 2: Heatmap Only ===============================================
     dnums = mdates.date2num(center_dates)
@@ -205,6 +185,8 @@ def plot_multidim_patterns_and_discords(
 
     fig2.tight_layout()
     plt.show()
+    plt.close(fig2)
+
 
 
 def plot_motif_overlays(
@@ -228,9 +210,7 @@ def plot_motif_overlays(
     None
         Displays the overlay figure using ``matplotlib``.
     """
-    if result is None:
-        print("None matrix_profile")
-        return
+
 
     window_size = result["window_size"][1]
     patterns = result["patterns"]
@@ -270,6 +250,7 @@ def plot_motif_overlays(
         fig.suptitle(f"Overlay of Motif Occurrences — {motif_label}", fontsize=14)
         plt.tight_layout()
         plt.show()
+        plt.close(fig)
 
 
 def plot_all_patterns_and_discords(
@@ -297,34 +278,15 @@ def plot_all_patterns_and_discords(
         Displays figures via ``matplotlib``.
     """
 
-    if result is None:
-        # Simple case
-        if isinstance(df, pd.DataFrame):
-            print(f"Window size : {result['window_size'][0]} ---")
-            plot_multidim_patterns_and_discords(df, None, only_heat_map=only_heat_map)
-        # Flat list case
-        elif isinstance(df, list) and all(isinstance(d, pd.DataFrame) for d in df):
-            for i, d in enumerate(df):
-                print(f"\n--- Cluster {i+1} (Window size : {result['window_size'][0]}) ---")
-                plot_multidim_patterns_and_discords(d, None, only_heat_map=only_heat_map)
-        else:
-            raise TypeError("Unsupported df structure when result is None.")
-        return  # nothing else to do
-
     # --- Normal cases ---
     if isinstance(df, pd.DataFrame) and isinstance(result, dict):
         print(f"Window size : {result['window_size'][0]} ---")
         plot_multidim_patterns_and_discords(df, result, tick_step=tick_step, only_heat_map=only_heat_map)
 
-    elif isinstance(df, list) and isinstance(result, list):
-        if all(isinstance(d, pd.DataFrame) for d in df) and all(isinstance(r, dict) for r in result):
-            for i, (d, r) in enumerate(zip(df, result)):
-                print(f"\n--- Cluster {i+1} (Window size : {r['window_size'][0]}) ---")
-                plot_multidim_patterns_and_discords(d, r, tick_step=tick_step, only_heat_map=only_heat_map)
-        else:
-            raise TypeError("Incompatible list structure for df and result.")
     else:
-        raise TypeError("df and result must be either DataFrame+dict, or matching lists.")
+        for i, (d, r) in enumerate(zip(df, result)):
+            print(f"\n--- Cluster {i+1} (Window size : {r['window_size'][0]}) ---")
+            plot_multidim_patterns_and_discords(d, r, tick_step=tick_step, only_heat_map=only_heat_map)
 
 
 def plot_all_motif_overlays(
@@ -348,35 +310,14 @@ def plot_all_motif_overlays(
     None
         Displays overlay figures via ``matplotlib``.
     """
-    if result is None:
-        if isinstance(df, pd.DataFrame):
-            plot_motif_overlays(df, None, normalize=normalize)
-        elif isinstance(df, list) and all(isinstance(d, pd.DataFrame) for d in df):
-            for i, d in enumerate(df):
-                if result["patterns"]:
-                    print(f"\n--- Cluster {i+1} (Window size : {result["window_size"][0]}) ---")
-                    plot_motif_overlays(d, None, normalize=normalize)
-        else:
-            raise TypeError("Unsupported df structure when result is None.")
-        return
-
     # --- Cas normaux ---
     if isinstance(df, pd.DataFrame) and isinstance(result, dict):
         plot_motif_overlays(df, result, normalize=normalize)
 
-    elif isinstance(df, list) and isinstance(result, list):
-        if all(isinstance(d, pd.DataFrame) for d in df) and all(isinstance(r, dict) for r in result):
-            for i, (d, r) in enumerate(zip(df, result)):
-                if r["patterns"]:
-                    print(f"\n--- Cluster {i+1} (Window size : {r["window_size"][0]}) ---")
-                    plot_motif_overlays(d, r, normalize=normalize)
-                else:
-                    print("No motifs")
-        else:
-            raise TypeError("Incompatible list structure for df and result.")
-
-    elif not result["patterns"]:
-        raise TypeError("df and result must be either DataFrame+dict, or matching lists.")
-    
     else:
-        print("No motifs")
+        for i, (d, r) in enumerate(zip(df, result)):
+            if r["patterns"]:
+                print(f"\n--- Cluster {i+1} (Window size : {r["window_size"][0]}) ---")
+                plot_motif_overlays(d, r, normalize=normalize)
+            else:
+                print("No motifs")

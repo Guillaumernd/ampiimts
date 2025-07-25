@@ -44,6 +44,7 @@ def matrix_profile_process(
     most_stable_only: bool = False,
     smart_interpolation: bool = True,
     printunidimensional: bool = False,
+    group_size: int = 5,
 ) -> dict:
     """Compute motif and discord information for one DataFrame.
 
@@ -73,6 +74,9 @@ def matrix_profile_process(
         similar sensors
     printunidimensional : bool, optional
         See unidimensional matri_profil
+    group_size : int, optional
+        limit dimensions with MDL algorithm when
+        cluster == False
 
     Returns
     -------
@@ -83,36 +87,21 @@ def matrix_profile_process(
     # Work on a copy to avoid mutating the caller's DataFrame
     df = df.copy()
 
-    # Remove a timestamp column if present; only numeric data is required
-    if "timestamp" in df.columns:
-        df = df.drop(columns=["timestamp"])
-
     # Use the window size stored in the DataFrame metadata when not given
     window_size = df.attrs["m"][1]
- 
-    # Validate that all columns contain numeric data
-    if not all(pd.api.types.is_numeric_dtype(df[col]) for col in df.columns):
-        raise ValueError(
-            "All columns must be numeric for matrix profile computation."
-        )
     
     # ==== UNIVARIATE ====
     if df.shape[1] == 1:
-        try:
-            # Use the univariate motif discovery helper
-            return discover_patterns_stumpy_mixed(
-                df,
-                window_size,
-                max_motifs=max_motifs,
-                discord_top_pct=discord_top_pct,
-                max_matches=max_matches,
-            )
-        except ValueError as e:
-            print(f"[MatrixProfile Warning] failed for window {window_size}: {e}")
-            return None
-
+        # Use the univariate motif discovery helper
+        return discover_patterns_stumpy_mixed(
+            df,
+            window_size,
+            max_motifs=max_motifs,
+            discord_top_pct=discord_top_pct,
+            max_matches=max_matches,
+        )
     # ==== MULTIVARIATE ====
-    try:
+    else:
         return discover_patterns_mstump_mixed(
             df,
             window_size,
@@ -125,10 +114,8 @@ def matrix_profile_process(
             most_stable_only=most_stable_only,
             smart_interpolation=smart_interpolation,
             printunidimensional=printunidimensional,
+            group_size=group_size,
         )
-    except ValueError as e:
-        print(f"[MatrixProfile Warning] failed for window {window_size}: {e}")
-        return None
 
 def matrix_profile(
     data: Union[pd.DataFrame, List[pd.DataFrame], List[List[pd.DataFrame]]],
@@ -142,6 +129,7 @@ def matrix_profile(
     most_stable_only: bool = False,
     smart_interpolation: bool = True,
     printunidimensional: bool = False,
+    group_size: int = 5,
 ) -> Union[dict, List[dict], List[List[dict]]]:
     """Compute matrix profiles for one or many DataFrames.
 
@@ -157,7 +145,7 @@ def matrix_profile(
         Fraction of the highest profile values considered discords.
     max_matches : int
         Maximum number of matches returned per motif.
-    cluster : bool
+    cluster : bool 
         Indicates whether the data came from clustering.
     motif : bool
         If ``True`` motifs are extracted in addition to discords.
@@ -170,16 +158,15 @@ def matrix_profile(
         similar sensors
     printunidimensional : bool, optional
         See unidimensional matri_profil
-
+    group_size : int, optional
+        limit dimensions with MDL algorithm when
+        cluster == False
 
     Returns
     -------
     dict or list
         Matrix profile information matching the structure of ``data``.
     """
-        
-    if data is None or (isinstance(data, list) and all(x is None for x in data)):
-        return None
 
     if isinstance(data, pd.DataFrame):
         # Single DataFrame case
@@ -197,9 +184,10 @@ def matrix_profile(
             most_stable_only=most_stable_only,
             smart_interpolation=smart_interpolation,
             printunidimensional=printunidimensional,
+            group_size=group_size,
         )
 
-    elif isinstance(data, list) and all(isinstance(x, pd.DataFrame) for x in data):
+    else:
         pds = data
         # Flat list of DataFrames
         return [
@@ -214,9 +202,7 @@ def matrix_profile(
                 most_stable_only=most_stable_only,
                 smart_interpolation=smart_interpolation,
                 printunidimensional=printunidimensional,
+                group_size=group_size,
             )
             for df in pds
         ]
-
-    else:
-        raise TypeError("df must be a DataFrame, a list of DataFrames, or a list of lists of DataFrames")

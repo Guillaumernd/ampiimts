@@ -723,13 +723,16 @@ def define_m(
     else:                              # > 1 jour
         base_secs, max_secs = 86400, min(2592000, total_secs / 2)  # 1 j à 30 j
 
+    if N < 100:
+        raise ValueError("Dataframe too small")
+
     max_secs = min(max_secs, total_secs / 2)
     base_secs = min(base_secs, max_secs)
 
     secs_cand = np.unique(
-        np.round(np.logspace(np.log10(base_secs), np.log10(max_secs), num=max_window_sizes)).astype(int)
+    np.logspace(np.log10(base_secs), np.log10(max_secs), num=max_window_sizes)
     )
-    window_sizes = [str(pd.to_timedelta(int(s), unit='s')) for s in secs_cand]
+    window_sizes = [str(pd.to_timedelta(s, unit='s')) for s in secs_cand]
 
     window_sizes_pts = []
     for ws in window_sizes:
@@ -742,8 +745,6 @@ def define_m(
         df = df.iloc[idx]
         N = len(df)
     numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
-    if not numeric_cols:
-        raise ValueError("No numeric columns")
     data = df[numeric_cols].values.astype(float)
 
     aggregated = []
@@ -798,7 +799,6 @@ def cluster_dimensions(
     min_std: float = 1e-2,
     min_valid_ratio: float = 0.8,
     min_cluster_size: int = 2,
-    mode: str = 'hybrid',
     display_info: bool = False,
 ) -> List[List[str]]:
     """
@@ -824,11 +824,6 @@ def cluster_dimensions(
         Minimum ratio of non-NaN values required for a column, by default 0.8.
     min_cluster_size : int, optional
         Minimum number of columns for a cluster to be kept, by default 2.
-    mode : {'motif', 'discord', 'hybrid'}, optional
-        Strategy to compute distances between columns:
-        - 'motif': favors similarly varying curves (square of correlation),
-        - 'discord': penalizes opposite sign trends (absolute correlation),
-        - 'hybrid': uses raw correlation (positive and negative preserved).
     display_info : bool, optional
         If True, displays inter- and intra-cluster correlations for diagnostics.
 
@@ -842,8 +837,6 @@ def cluster_dimensions(
     ------
     TypeError
         If `df` is neither a DataFrame nor a list of DataFrames.
-    ValueError
-        If `mode` is not one of {'motif', 'discord', 'hybrid'}.
 
     Notes
     -----
@@ -859,16 +852,7 @@ def cluster_dimensions(
     [['sensorA_1', 'sensorB_1', 'sensorC_1', 'timestamp'], 
      ['sensorA_2', 'sensorB_2', 'sensorC_2', 'timestamp']]
     """
-    if isinstance(df, pd.DataFrame):
-        df_list = [df]
-    elif isinstance(df, list) and all(isinstance(x, pd.DataFrame) for x in df):
-        df_list = df
-    else:
-        raise TypeError("df must be a DataFrame or a list of DataFrames")
-
-    if mode not in {'motif', 'discord', 'hybrid'}:
-        raise ValueError("mode must be 'motif', 'discord', or 'hybrid'")
-
+    df_list = [df]
     clusters = []
 
     for base_df in df_list:
@@ -888,13 +872,7 @@ def cluster_dimensions(
 
         # 2. Matrice de distance
         corr = base_df[valid_cols].corr()
-
-        if mode == 'motif':
-            dist = 1 - corr.pow(2).abs()
-        elif mode == 'discord':
-            dist = 1 - corr.abs()
-        elif mode == 'hybrid':
-            dist = 1 - corr
+        dist = 1 - corr
 
         dist = dist.fillna(1.0)
 
@@ -1029,7 +1007,6 @@ def pre_processed(
     window_size: str = None,
     sort_by_variables: bool = True,
     cluster: bool = False,
-    mode: str = 'hybrid',
     top_k_cluster: int = 4,
     group_size: int = 16,
     display_info: bool = False,
@@ -1065,8 +1042,6 @@ def pre_processed(
         Whether to sort columns by variance before clustering (not currently used), by default True.
     cluster : bool, optional
         If True, performs clustering of time series dimensions before normalization, by default False.
-    mode : {'motif', 'discord', 'hybrid'}, optional
-        Distance mode used for clustering (via `cluster_dimensions`), by default 'hybrid'.
     top_k_cluster : int, optional
         Maximum number of clusters to return, by default 4.
     group_size : int, optional
@@ -1111,11 +1086,8 @@ def pre_processed(
             if int(pd.Timedelta(window_size) / df.index.to_series().diff().median()) >= len(df) // 2:
                 raise ValueError("Window size is too large for the signal length.")
             return window_size
-        try:
-            win_list = define_m(df)
-            return win_list[0][1] if win_list else max(2, fallback_len // 2)
-        except ValueError:
-            return max(2, fallback_len // 2)
+        win_list = define_m(df)
+        return win_list[0][1] if win_list else max(2, fallback_len // 2)
 
     def process_group(df_group, smart_interpolation):
         interpolated = interpolate(df_group, gap_multiplier=gap_multiplier)
@@ -1144,15 +1116,11 @@ def pre_processed(
             normalized_whithout_inter = None
         return interpolated, normalized, normalized_whithout_inter
 
-    # === Type checking ===
-    if isinstance(data, list) and not all(isinstance(x, pd.DataFrame) for x in data):
-        raise TypeError("df must be a DataFrame or a list of DataFrames")
-
     # === Case 1: list of DataFrames ===
     if isinstance(data, list):
         if cluster:
             synced_dfs = synchronize_on_common_grid(data, propagate_nan=False, display_info=display_info, gap_multiplier=gap_multiplier)
-            clustered_groups = cluster_dimensions(synced_dfs, top_k=top_k_cluster, mode=mode, group_size=group_size, display_info=display_info)
+            clustered_groups = cluster_dimensions(synced_dfs, top_k=top_k_cluster, group_size=group_size, display_info=display_info)
 
             group_result, group_result_normalize, group_result_normalize_whithout_Nan = [], [], []
             for col_names in sorted(clustered_groups):
@@ -1176,26 +1144,28 @@ def pre_processed(
                 window_size=final_ws
             ) 
             return df_interpolate, df_normalize, None
+    
     # === Case 2: one DataFrame ===
-    df = data
+    else:  
+        df = data
 
-    # Interpolate missing values using the specified gap multiplier
-    df_interpolate = interpolate(df.copy(), gap_multiplier=gap_multiplier)
+        # Interpolate missing values using the specified gap multiplier
+        df_interpolate = interpolate(df.copy(), gap_multiplier=gap_multiplier)
 
-    # Determine the final window size based on the interpolated data
-    final_ws = get_window_size(df_interpolate, len(df_interpolate))
+        # Determine the final window size based on the interpolated data
+        final_ws = get_window_size(df_interpolate, len(df_interpolate))
 
-    # Normalize the data using adaptive z-normalization
-    df_normalize = normalization(
-        df_interpolate,
-        min_std=min_std,
-        min_valid_ratio=min_valid_ratio,
-        alpha=alpha,
-        window_size=final_ws
-    )
+        # Normalize the data using adaptive z-normalization
+        df_normalize = normalization(
+            df_interpolate,
+            min_std=min_std,
+            min_valid_ratio=min_valid_ratio,
+            alpha=alpha,
+            window_size=final_ws
+        )
 
-    # Return the preprocessed versions
-    return df_interpolate, df_normalize, None
+        # Return the preprocessed versions
+        return df_interpolate, df_normalize, None
 
 
 

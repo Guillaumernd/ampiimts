@@ -1,6 +1,7 @@
 import pytest
 import pandas as pd
 from ampiimts import ampiimts
+from ampiimts import define_m
 from pathlib import Path
 import numpy as np 
 import os 
@@ -51,7 +52,6 @@ def test_univariate_from_csv_or_df(csv_path, as_str_input, cluster, motif):
         motif=motif,
         most_stable_only=False,
         smart_interpolation=False,
-        window_size=60,
         visualize=True,
         only_heat_map=False,
     )
@@ -110,7 +110,7 @@ def test_multivariate_from_air_bejin(cluster, motif, most_stable_only, smart_int
         most_stable_only=most_stable_only,
         smart_interpolation=smart_interpolation,
         max_len=750,
-        group_size=10,
+        group_size=5,
         visualize=True,
         only_heat_map=False
     )
@@ -125,6 +125,28 @@ def test_multivariate_from_air_bejin(cluster, motif, most_stable_only, smart_int
         assert isinstance(interpolated, pd.DataFrame)
         assert isinstance(normalized, pd.DataFrame)
         assert isinstance(result, dict)
+
+def test_multivariate_from_air_bejin_motif():
+    folder = "tests/data/air_bejin"
+
+    interpolated, normalized, result = ampiimts(folder,
+                                                max_len=3000,
+                                                top_k_cluster=1,
+                                                motif=True, 
+                                                group_size=5,
+                                                window_size="10h", 
+                                                display_info=False,
+                                                discord_top_pct=0.02,
+                                                most_stable_only=False,
+                                                smart_interpolation=True,
+                                                printunidimensional=False,
+                                                only_heat_map=False
+                                                )
+    assert isinstance(interpolated, list)
+    assert all(isinstance(df, pd.DataFrame) for df in interpolated)
+    assert isinstance(normalized, list)
+    assert all(isinstance(df, pd.DataFrame) for df in normalized)
+    assert isinstance(result, list)
 
 
 @pytest.mark.parametrize("window_size", ["24h", 24])
@@ -294,3 +316,17 @@ def test_ampii_folder_with_directory_ignored(tmp_path):
     df.to_csv(tmp_path / "ok.csv", index=False)
     with pytest.raises(ValueError, match="Not enough points to estimate frequency."):
         ampiimts(str(tmp_path))
+
+
+@pytest.mark.parametrize("freq_str", [
+    "1ns", "100ns", "5us", "5ms", "50ms", "500ms",
+    "5s", "1min", "5min", "30min", "1h", "12h", "1d", "2d"
+])
+def test_define_m_frequency_ranges(freq_str):
+    def generate_df(freq: str, n: int = 50) -> pd.DataFrame:
+        index = pd.date_range("2020-01-01", periods=n, freq=freq)
+        data = np.random.randn(n, 2)
+        return pd.DataFrame(data, index=index, columns=["sensor_1", "sensor_2"])
+    df = generate_df(freq_str)
+    with pytest.raises(ValueError, match="Dataframe too small"):
+        define_m(df, k=3)
