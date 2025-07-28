@@ -495,7 +495,7 @@ def discover_patterns_mstump_mixed(
 
             valid_motif_starts = []
             for s in motif_starts:
-                if any(abs(s - d0) < window_size for d0 in discords):
+                if any(abs(s - d0) < window_size // 2 for d0 in discords):
                     continue
                 span = (s, s + window_size)
                 if any(max(s, o[0]) < min(span[1], o[1]) for o in occupied0):
@@ -528,7 +528,7 @@ def discover_patterns_mstump_mixed(
                     T=X,
                     normalize=False
                 )
-                distance_threshold = 0.30 * np.linalg.norm(medoid_seg)
+                distance_threshold = 0.5 * np.linalg.norm(medoid_seg)
                 motif_starts = [
                     int(idx) for dist, idx in matches if dist < distance_threshold]
                 # Filter motifs that overlap a discord

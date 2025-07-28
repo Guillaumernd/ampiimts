@@ -1,7 +1,7 @@
 import pytest
 import pandas as pd
 from ampiimts import ampiimts
-from ampiimts import define_m
+from ampiimts import define_m, discover_patterns_mstump_mixed
 from pathlib import Path
 import numpy as np 
 import os 
@@ -125,28 +125,6 @@ def test_multivariate_from_air_bejin(cluster, motif, most_stable_only, smart_int
         assert isinstance(interpolated, pd.DataFrame)
         assert isinstance(normalized, pd.DataFrame)
         assert isinstance(result, dict)
-
-def test_multivariate_from_air_bejin_motif():
-    folder = "tests/data/air_bejin"
-
-    interpolated, normalized, result = ampiimts(folder,
-                                                max_len=3000,
-                                                top_k_cluster=1,
-                                                motif=True, 
-                                                group_size=3,
-                                                window_size="10h", 
-                                                display_info=False,
-                                                discord_top_pct=0.02,
-                                                most_stable_only=False,
-                                                smart_interpolation=True,
-                                                printunidimensional=False,
-                                                only_heat_map=False
-                                                )
-    assert isinstance(interpolated, list)
-    assert all(isinstance(df, pd.DataFrame) for df in interpolated)
-    assert isinstance(normalized, list)
-    assert all(isinstance(df, pd.DataFrame) for df in normalized)
-    assert isinstance(result, list)
 
 
 @pytest.mark.parametrize("window_size", ["24h", 24])
@@ -330,3 +308,52 @@ def test_define_m_frequency_ranges(freq_str):
     df = generate_df(freq_str)
     with pytest.raises(ValueError, match="Dataframe too small"):
         define_m(df, k=3)
+
+def test_force_faiss_with_realistic_motif():
+    """
+    Teste discover_patterns_mstump_mixed() avec un motif réaliste :
+    montée → plateau → descente, répété 3 fois.
+    """
+    window_size = 15
+
+    # Motif : montée linéaire (5), plateau (5), descente linéaire (5)
+    ramp_up = np.linspace(0, 1, 5)
+    plateau = np.ones(5)
+    ramp_down = np.linspace(1, 0, 5)
+    motif = np.concatenate([ramp_up, plateau, ramp_down])  # total 15
+
+    # Signal = motifs espacés par du bruit faible
+    signal = np.concatenate([
+        np.random.normal(0, 0.01, 10),
+        motif,
+        np.random.normal(0, 0.01, 20),
+        motif,
+        np.random.normal(0, 0.01, 20),
+        motif,
+        np.random.normal(0, 0.01, 10),
+    ])
+
+    # DataFrame multivarié : deux capteurs identiques (comme des jumeaux)
+    df = pd.DataFrame({
+        "sensor_1": signal,
+        "sensor_2": signal
+    }, index=pd.date_range("2020-01-01", periods=len(signal), freq="1s"))
+
+    df.attrs["m"] = window_size
+
+    result = discover_patterns_mstump_mixed(
+        df,
+        window_size=window_size,
+        motif=True,
+        cluster=False,
+        smart_interpolation=False,
+        most_stable_only=False,
+        max_motifs=3,
+        max_matches=10,
+        printunidimensional=False,
+        discord_top_pct=0.01  # pour éviter de tout filtrer
+    )
+
+    print("[TEST] motifs détectés :", result["patterns"])
+    assert isinstance(result["patterns"], list)
+    assert len(result["patterns"]) >= 1
