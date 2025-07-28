@@ -360,17 +360,11 @@ def interpolate(
     if inferred:
         if len(inferred) == 1 or (len(inferred) == 2 and inferred[0] == "W"):
             inferred = "1" + inferred
-        try:
-            if inferred.isalpha():
-                inferred = "1" + inferred
-            freq = pd.to_timedelta(inferred)
-        except ValueError:
-            freq = idx.to_series().diff().median()
+        if inferred.isalpha():
+            inferred = "1" + inferred
+        freq = pd.to_timedelta(inferred)
     else:
         freq = idx.to_series().diff().median()
-
-    if pd.isna(freq) or freq <= pd.Timedelta(seconds=0):
-        freq = pd.Timedelta(seconds=1)
 
     max_gap = freq * gap_multiplier
 

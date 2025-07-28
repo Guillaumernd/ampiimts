@@ -246,7 +246,7 @@ def test_clustering_with_numeric_column_names():
         motif=False,
         most_stable_only=False,
         smart_interpolation=True,
-        max_len=750,
+        max_len=5100,
         visualize=False,
         display_info=False,
     )

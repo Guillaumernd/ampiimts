@@ -1,6 +1,9 @@
 # AMPIIMTS
 
 [![codecov](https://codecov.io/gh/Guillaumernd/ampiimts/graph/badge.svg?token=6JEX3JUSAB)](https://codecov.io/gh/Guillaumernd/ampiimts)
+![Tests](https://github.com/Guillaumernd/ampiimts/actions/workflows/python-tests.yml/badge.svg)
+![Python](https://img.shields.io/badge/python-3.12%2B-blue)
+![Licence](https://img.shields.io/github/license/Guillaumernd/ampiimts)
 
 Adaptive Matrix Profile Indexing for irregular multivariate time series.
 

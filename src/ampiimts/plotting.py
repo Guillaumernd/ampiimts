@@ -114,8 +114,6 @@ def plot_multidim_patterns_and_discords(
                 if dim not in pattern_dims[pat_id]:
                     continue
                 for j, s in enumerate(pat["motif_indices_debut"]):
-                    if s < 0 or s + window_size >= len(df):
-                        continue
                     e = s + window_size
                     ax.axvspan(df.index[s], df.index[e], color=c, alpha=0.25,
                             label=(pat["pattern_label"] if j == 0 and dim == 0 else None))

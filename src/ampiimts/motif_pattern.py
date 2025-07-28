@@ -84,23 +84,22 @@ def find_discords(
     valid_idx = np.where(~np.isnan(P))[0]
     candidates = []
 
-    if X is not None:
-        X = np.asarray(X, dtype=float)
-        X_is_multivariate = X.ndim == 2
-        length = X.shape[1] if X_is_multivariate else X.shape[0]
-        nan_pos = np.isnan(X) if not X_is_multivariate else np.isnan(X).any(axis=0)
-        nan_indices = np.where(nan_pos)[0]
+    X = np.asarray(X, dtype=float)
+    X_is_multivariate = X.ndim == 2
+    length = X.shape[1] if X_is_multivariate else X.shape[0]
+    nan_pos = np.isnan(X) if not X_is_multivariate else np.isnan(X).any(axis=0)
+    nan_indices = np.where(nan_pos)[0]
 
-        for idx in valid_idx:
-            start, end = idx, idx + window_size
-            if end > length:
-                continue
-            window = X[:, start:end] if X_is_multivariate else X[start:end]
-            if np.isnan(window).mean() > max_nan_frac:
-                continue
-            if margin > 0 and np.any((nan_indices >= start - margin) & (nan_indices < end + margin)):
-                continue
-            candidates.append(idx)
+    for idx in valid_idx:
+        start, end = idx, idx + window_size
+        if end > length:
+            continue
+        window = X[:, start:end] if X_is_multivariate else X[start:end]
+        if np.isnan(window).mean() > max_nan_frac:
+            continue
+        if margin > 0 and np.any((nan_indices >= start - margin) & (nan_indices < end + margin)):
+            continue
+        candidates.append(idx)
 
     n_top = max(1, int(np.ceil(discord_top_pct * len(candidates))))
     top_group = sorted(candidates, key=lambda i: P[i], reverse=True)[:n_top]
