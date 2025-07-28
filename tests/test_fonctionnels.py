@@ -1,7 +1,7 @@
 import pytest
 import pandas as pd
 from ampiimts import ampiimts
-from ampiimts import define_m, discover_patterns_mstump_mixed
+from ampiimts import define_m, discover_patterns_mstump_mixed, plot_all_motif_overlays
 from pathlib import Path
 import numpy as np 
 import os 
@@ -341,7 +341,7 @@ def test_force_faiss_with_realistic_motif():
         "sensor_2": signal
     }, index=pd.date_range("2020-01-01", periods=len(signal), freq="1s"))
 
-    df.attrs["m"] = window_size
+    df.attrs["m"] = [window_size, window_size]
 
     result = discover_patterns_mstump_mixed(
         df,
@@ -355,6 +355,8 @@ def test_force_faiss_with_realistic_motif():
         printunidimensional=False,
         discord_top_pct=0.01  # pour éviter de tout filtrer
     )
+
+    plot_all_motif_overlays([df], [result])
 
     print("[TEST] motifs détectés :", result["patterns"])
     assert isinstance(result["patterns"], list)

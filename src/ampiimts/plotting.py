@@ -235,13 +235,7 @@ def plot_motif_overlays(
         for dim, col in enumerate(df.columns):
             ax = axs[dim]
             for idx in indices:
-                if idx + window_size > len(df):
-                    continue  # Skip if segment goes beyond the end
                 segment = df.iloc[idx:idx + window_size, dim]
-                if len(segment) != window_size:
-                    continue
-                if normalize:
-                    segment = (segment - segment.mean()) / (segment.std() + 1e-8)
                 ax.plot(np.arange(len(segment)), segment, alpha=0.6, color=c)
             ax.set_ylabel(col)
             ax.grid(True)

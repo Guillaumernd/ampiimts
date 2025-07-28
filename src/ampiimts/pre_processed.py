@@ -782,8 +782,6 @@ def define_m(
             aggregated.append((pts, ws_str, score))
 
         except Exception as e:
-            if verbose:
-                print(f"Erreur fenêtre {pts}: {e}")
             continue
 
     aggregated = [t for t in aggregated if not np.isnan(t[2])]
