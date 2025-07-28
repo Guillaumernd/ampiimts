@@ -133,7 +133,7 @@ def test_multivariate_from_air_bejin_motif():
                                                 max_len=3000,
                                                 top_k_cluster=1,
                                                 motif=True, 
-                                                group_size=5,
+                                                group_size=3,
                                                 window_size="10h", 
                                                 display_info=False,
                                                 discord_top_pct=0.02,
