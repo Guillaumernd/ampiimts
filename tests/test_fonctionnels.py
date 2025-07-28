@@ -314,6 +314,8 @@ def test_force_faiss_with_realistic_motif():
     Teste discover_patterns_mstump_mixed() avec un motif réaliste :
     montée → plateau → descente, répété 3 fois.
     """
+    np.random.seed(42)
+
     window_size = 15
 
     # Motif : montée linéaire (5), plateau (5), descente linéaire (5)
