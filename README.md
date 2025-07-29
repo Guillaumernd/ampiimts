@@ -9,17 +9,20 @@ Adaptive Matrix Profile Indexing for irregular multivariate time series.
 
 ## Features
 
-- Preprocessing helpers to interpolate irregular data and normalize values
-  (ASWN normalization, trend removal, etc.).
-- Automatic window size selection based on clustering or user provided sizes.
-- Motif and discord detection through STUMPY matrix profile computations.
-- Optional dimensionality reduction and FAISS based nearest neighbour search.
-- Plotting utilities to visualise patterns and discords.
+- Data Preprocessing
+- Automatic Window Selection
+- Clustering of Dimensions
+- Matrix Profile Computation
+- Motif and Discord Discovery
+- Iterative Refinement (Smart Interpolation)
+- Visualization Utilities
+
 
 ## Documentation
 
 - [Documentation](documentation/README.md)
-- [Examples](documentation/ampiimts_example.ipynb)
+- [Examples](documentation/ampiimts_example.ipynb) with air bejin [dataset](tests/data/air_bejin/)
+- [Diagram](documentation/Features_ampiimts_package.drawio.png)
 
 ## Installation
 
@@ -56,18 +59,38 @@ results = ampiimts("/path/to/csv/folder", visualize=False)
 `ampiimts` returns the interpolated data, the normalized data and a
 dictionary with motif and discord information.
 
+Depending on whether `cluster==True` or `cluster==False`, the parameters in result can be lists or non-lists.
+
+`cluster==False`
+- `result[0]` = `df_interpolate`
+
+- `result[1]` = `df_normalize`
+
+- `result[2]` = `dic_matrix_profile`
+  - `result[2]['matrix_profile']` = `matrix_profile`
+  - `result[2]['window_size']` = `window_size`
+  - `result[2]['discord_indices']` = `discord_indices`
+  - `result[2]['patterns']` = `list_dic_pattern` : 
+    - `result[2]['patterns][pattern_label]` = `pattern_label`
+    - `result[2]['patterns][medoid_idx_start]` = `medoid_idx_start`
+    - `result[2]['patterns][motif_indice_start][0...n-1]` = `motif_indice_start`
+
+`cluster==True`
+
+- `result[0][0...n-1]` = `df_interpolate_0`
+
+- `result[1][0...n-1]` = `df_normalize_0`
+
+- `result[2][0...n-1]` = `dic_matrix_profile_0`
+
+
 ## Running tests
 
 ```
 pytest -vv
 ```
 
-## Contributing
-
-Issues and pull requests are welcome. Please run the test suite before
-submitting changes.
-
 ## License
 
-This project is released under the MIT license. See [LICENCE](LICENCE) for
+This project is released under the MIT license. See [LICENCE](LICENSE) for
 details.

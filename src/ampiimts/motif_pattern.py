@@ -249,8 +249,8 @@ def discover_patterns_stumpy_mixed(
 
         results.append({
             'pattern_label': f'motif_{i+1}',
-            'medoid_idx': medoid_start,
-            'motif_indices_debut': filtered
+            'medoid_idx_start': medoid_start,
+            'motif_indice_start': filtered
         })
 
     return {
@@ -546,8 +546,8 @@ def discover_patterns_mstump_mixed(
                 if len(filtered) > 1:
                     aligned_patterns.append({
                         "pattern_label": f"mmotif_{motif_id + 1}",
-                        "medoid_idx": medoid_start,
-                        "motif_indices_debut": filtered
+                        "medoid_idx_start": medoid_start,
+                        "motif_indice_start": filtered
                     })
     mp_full = compute_univariate_matrix_profiles(df, window_size) if printunidimensional else mp_full
     return {

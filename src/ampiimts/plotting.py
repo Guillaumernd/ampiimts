@@ -113,7 +113,7 @@ def plot_multidim_patterns_and_discords(
                 c = motif_colors[pat_id % len(motif_colors)]
                 if dim not in pattern_dims[pat_id]:
                     continue
-                for j, s in enumerate(pat["motif_indices_debut"]):
+                for j, s in enumerate(pat["motif_indice_start"]):
                     e = s + window_size
                     ax.axvspan(df.index[s], df.index[e], color=c, alpha=0.25,
                             label=(pat["pattern_label"] if j == 0 and dim == 0 else None))
@@ -165,7 +165,7 @@ def plot_multidim_patterns_and_discords(
             continue
         ymin = min(active_dims)
         ymax = max(active_dims) + 1
-        for s in pat["motif_indices_debut"]:
+        for s in pat["motif_indice_start"]:
             x0 = mdates.date2num(df.index[s])
             x1 = mdates.date2num(df.index[s + window_size])
             rect = plt.Rectangle(
@@ -227,7 +227,7 @@ def plot_motif_overlays(
         if n_dim == 1:
             axs = [axs]
         motif_label = pat["pattern_label"]
-        indices = pat["motif_indices_debut"]
+        indices = pat["motif_indice_start"]
         c = motif_colors[i % len(motif_colors)]
 
         for dim, col in enumerate(df.columns):

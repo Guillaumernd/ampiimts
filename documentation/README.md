@@ -63,12 +63,12 @@ All input time series are synchronized to a common time grid. Each series is fir
 
 ### Dimensionality Reduction (optional)
 
-If clustering is enabled (cluster=True), the package performs hierarchical clustering on the variables to group similar ones. This uses the correlation matrix of the time series: variables that are highly correlated are clustered together; under the assumption they capture related phenomena. Only the top k clusters (by average correlation) are retained, and each cluster (up to a set group size) is analyzed separately. This reduces noise and complexity by isolating unrelated sensors. If clustering is off, all variables are treated as one multivariate set.
+If clustering is enabled (cluster=True), the package performs hierarchical clustering on the variables to group similar ones. This uses the correlation matrix of the time series: variables that are highly correlated are clustered together; under the assumption they capture related phenomena. Only the top k clusters (by average correlation) are retained, and each cluster (up to a set group size) is analyzed separately. This reduces noise and complexity by isolating unrelated sensors. If clustering is off, all variables are treated as one multivariate set. Clusters are constructed with at least two types of variables. You can modify group_size parameter to define the size of each cluster and top_k_cluster to define the number of clusters. 
 
 
 ### Window Size Determination
 
-A crucial parameter is the subsequence length m (window size) for analysis. If the user has not specified a window, AMPIIMTS will choose one automatically. It may do so by trying to identify a characteristic scale in the data – for example, using a clustering of subsequences or a nearest-neighbor search on random segments (leveraging FAISS for efficiency) to find a length that yields low-distance matches. The chosen m is stored in the data attributes for reference. (In time series contexts, a well-chosen window might correspond to a seasonal cycle length or the expected duration of patterns of interest.). The window size used for normalization and matrix profile.
+A crucial parameter is the subsequence length m (window size) for analysis. If the user has not specified a window, AMPIIMTS will choose one automatically. It may do so by trying to identify a characteristic scale in the data – for example, using a clustering of subsequences or a nearest-neighbor search on random segments (leveraging STUMP, MSTUMP for efficiency) to find a length that yields low-distance matches. The chosen m is stored in the data attributes for reference. (In time series contexts, a well-chosen window might correspond to a seasonal cycle length or the expected duration of patterns of interest.). The window size used for normalization and matrix profile.
 
 
 ### Normalization
@@ -88,7 +88,7 @@ Once the matrix profile is obtained, the package identifies motifs and discords.
 
 ### Smart Re-Interpolation (optional)
 
-If the option is enabled, AMPIIMTS performs an iterative refinement. After the first pass of anomaly detection, it examines the matrix profile results to identify which sensors are most “stable” (i.e. those without major anomalies). It then uses the information from those stable signals to interpolate missing values in other sensors via similarity matching. In other words, if a certain sensor had gaps, the algorithm finds a few other sensors with similar behavior (via their matrix profile) and uses their data to fill in the gap in a statistically informed way. After this cross-sensor interpolation, the matrix profile is recomputed on the filled data to yield refined motifs and discords	. This two-step process can reveal anomalies that were initially obscured by missing data.
+If the option is enabled, AMPIIMTS performs an iterative refinement with smart_interpolation parameter. After the first pass of anomaly detection, it examines the matrix profile results to identify which sensors are most “stable” (i.e. those without major anomalies). It then uses the information from those stable signals to interpolate missing values in other sensors via similarity matching. In other words, if a certain sensor had gaps, the algorithm finds a few other sensors with similar behavior (via their matrix profile) and uses their data to fill in the gap in a statistically informed way. After this cross-sensor interpolation, the matrix profile is recomputed on the filled data to yield refined motifs and discords	. This two-step process can reveal anomalies that were initially obscured by missing data.
 
 
 ### Visualization (if enabled)
@@ -125,6 +125,7 @@ This module handles the preparation and cleaning of raw time series. Its main fu
 
 - **remove_linear_columns()**: Drops any columns with near-linear behavior based on a high R² fit, which could distort motif/discord detection.
 
+- **Define_m()** : Suggest optimal window sizes for time series motif discovery using STUMP or MSTUMP. This function analyzes a time-indexed DataFrame to extract the `k` most promising window sizes or motif extraction. It adapts to the data's temporal resolution and supports both univariate and multivariate input. Window sizes are scored based on a composite metric that includes motif strength, discord separation, and local stability.
 
 - **normalization()** (and internal **aswn_with_trend()**): Applies sliding window normalization to each column, optionally blending with long-term trend using a weighted alpha parameter.
 
